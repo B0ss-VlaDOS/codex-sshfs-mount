@@ -291,6 +291,8 @@ function Build-SshfsWinPrefix {
   $hostPart = if ($RemoteUser) { ([string]$RemoteUser + '@' + [string]$RemoteHost) } else { [string]$RemoteHost }
   if ($Port) { $hostPart = $hostPart + '!' + [string]$Port }
 
+  # sshfs-win "svc" expects a Windows UNC prefix **with a single leading backslash**
+  # (see SSHFS-Win README: "note single backslash").
   $prefix = '\' + $server + '\' + $hostPart
   if ($path) { $prefix = $prefix + '\' + $path }
   return $prefix
@@ -302,15 +304,22 @@ function Invoke-SshfsWinSvc {
     [string]$Prefix,
     [Parameter(Mandatory = $true)]
     [string]$DriveMount,
-    [string]$OptStr = '',
+    [string]$LocalUser = '',
+    [string[]]$Options = @(),
     [string]$Password = ''
   )
 
   if (-not $script:SshfsWinCmd) { Die "sshfs-win.exe is required (not found)" }
 
   $argv = @('svc', $Prefix, $DriveMount)
-  if ($OptStr) { $argv += @('-o', $OptStr) }
+  if ($LocalUser) { $argv += @([string]$LocalUser) }
+  foreach ($o in @($Options)) {
+    if ($o) { $argv += @('-o', [string]$o) }
+  }
   $argLine = ($argv | ForEach-Object { Quote-Arg $_ }) -join ' '
+
+  $script:LastSshfsWinStdout = ''
+  $script:LastSshfsWinStderr = ''
 
   if (-not $Password) {
     & $script:SshfsWinCmd @argv
@@ -340,6 +349,9 @@ function Invoke-SshfsWinSvc {
   try { $stdout = $proc.StandardOutput.ReadToEnd() } catch { }
   try { $stderr = $proc.StandardError.ReadToEnd() } catch { }
   $proc.WaitForExit()
+
+  $script:LastSshfsWinStdout = $stdout
+  $script:LastSshfsWinStderr = $stderr
 
   if ($stdout) { $stdout.TrimEnd("`r", "`n") | Write-Host }
   if ($stderr) { $stderr.TrimEnd("`r", "`n") | Write-Host }
@@ -574,19 +586,24 @@ $remoteSpec = if ($root) { "$remote`:$root" } else { "$remote`:" }
 $sshfsWinPrefix = Build-SshfsWinPrefix -RemoteHost $remoteHost -RemoteUser $user -Port $port -Root $root
 
 $opts = @(
-  "reconnect",
   "ServerAliveInterval=$Interval",
   "ServerAliveCountMax=$Count",
-  "TCPKeepAlive=yes",
   # Avoid interactive "Are you sure you want to continue connecting (yes/no)?" prompts.
-  # Note: this is less strict than default; override via SSHFS_EXTRA_OPTS if desired.
-  "StrictHostKeyChecking=no"
+  # Note: sshfs-win "svc" already uses safe defaults for known_hosts; this keeps behavior consistent.
+  "StrictHostKeyChecking=no",
+  "UserKnownHostsFile=/dev/null"
 )
 if ($env:SSHFS_EXTRA_OPTS) { $opts += [string]$env:SSHFS_EXTRA_OPTS }
 $opts = @($opts | Where-Object { $_ })
 
 if ($keyPath) {
   $opts += @("IdentityFile=$keyPath", "IdentitiesOnly=yes")
+}
+
+# Best-effort non-interactive password feeding for sshfs/ssh on Windows.
+# Works only if the bundled sshfs supports "password_stdin". If not supported, the retry logic will drop options.
+if ($askpassSecret -and (-not $keyPath)) {
+  $opts += @("password_stdin")
 }
 $optStr = ($opts -join ',')
 
@@ -673,7 +690,18 @@ if ($DryRun) {
   if ($letterForPrint) {
     $driveMountForPrint = ($letterForPrint + ':')
     if ($script:SshfsWinCmd) {
-      $printedSvc = @($script:SshfsWinCmd, 'svc', $sshfsWinPrefix, $driveMountForPrint, '-o', $optStr)
+      $locUserForPrint = ''
+      if ($env:USERNAME) {
+        if ($env:USERDOMAIN) {
+          $locUserForPrint = ([string]$env:USERDOMAIN + '+' + [string]$env:USERNAME)
+        } else {
+          $locUserForPrint = [string]$env:USERNAME
+        }
+      }
+
+      $printedSvc = @($script:SshfsWinCmd, 'svc', $sshfsWinPrefix, $driveMountForPrint)
+      if ($locUserForPrint) { $printedSvc += @($locUserForPrint) }
+      foreach ($o in @($opts)) { if ($o) { $printedSvc += @('-o', [string]$o) } }
       Write-Host ('sshfs-win command (drive): ' + (& $fmt $printedSvc))
     } elseif ($script:SshfsCmd) {
       $sshfsForPrint = $script:SshfsCmd
@@ -717,6 +745,12 @@ function Try-MountToDriveAndJunction {
   if ($letter) { $letter = $letter.ToUpperInvariant() }
   if (-not $letter) { Die "no free drive letter available" }
 
+  function Test-DriveMounted([string]$dl) {
+    if (-not $dl) { return $false }
+    $root = ([string]$dl).ToUpperInvariant() + ':\'
+    try { return (Test-Path -LiteralPath $root) } catch { return $false }
+  }
+
   # Remove empty dir and replace with junction to X:\
   if (Test-Path -LiteralPath $mountDir) { Remove-JunctionOrDir $mountDir }
   cmd /c "mkdir ""$mountDir""" | Out-Null
@@ -724,7 +758,47 @@ function Try-MountToDriveAndJunction {
   $driveMount = ($letter + ':')
   $rc = 1
   if ($script:SshfsWinCmd) {
-    $rc = Invoke-SshfsWinSvc -Prefix $sshfsWinPrefix -DriveMount $driveMount -OptStr $optStr -Password $askpassSecret
+    Write-Host ("Mounting via sshfs-win to drive " + $driveMount + " ...")
+
+    # If the drive letter was previously used, best-effort cleanup.
+    try { cmd /c ("net use " + $driveMount + " /delete /y") | Out-Null } catch { }
+    try { mountvol $driveMount /D | Out-Null } catch { }
+
+    # sshfs-win.exe svc syntax: sshfs-win svc PREFIX X: [LOCUSER] [SSHFS_OPTIONS...]
+    # If LOCUSER is omitted, the next argument is consumed as LOCUSER, so we must always pass it
+    # when we also pass "-o ..." options.
+    $locUser = ''
+    if ($env:USERNAME) {
+      if ($env:USERDOMAIN) {
+        $locUser = ([string]$env:USERDOMAIN + '+' + [string]$env:USERNAME)
+      } else {
+        $locUser = [string]$env:USERNAME
+      }
+    }
+
+    $tries = @(
+      ,@($opts),
+      ,@($opts | Where-Object { $_ -ne 'password_stdin' }),
+      ,@($opts | Where-Object { $_ -notmatch '^ServerAliveInterval=' -and $_ -notmatch '^ServerAliveCountMax=' -and $_ -ne 'TCPKeepAlive=yes' }),
+      ,@($opts | Where-Object { $_ -ne 'StrictHostKeyChecking=no' }),
+      ,@($opts | Where-Object { $_ -ne 'UserKnownHostsFile=/dev/null' }),
+      ,@()
+    )
+
+    foreach ($optSet in $tries) {
+      $script:LastSshfsWinStdout = ''
+      $script:LastSshfsWinStderr = ''
+      $rc = Invoke-SshfsWinSvc -Prefix $sshfsWinPrefix -DriveMount $driveMount -LocalUser $locUser -Options $optSet -Password $askpassSecret
+
+      # Some builds may return a non-zero exit code even though the mount is created.
+      if ($rc -eq 0 -or (Test-DriveMounted $letter)) {
+        if ($rc -ne 0) {
+          Write-Warning ("sshfs-win exited with code " + $rc + " but " + $driveMount + " appears mounted; continuing.")
+        }
+        break
+      }
+      # Keep trying reduced option sets; sshfs-win builds vary in supported -o options.
+    }
   } elseif ($script:SshfsCmd) {
     $driveArgs = @()
     if ($port) { $driveArgs += @('-p', $port) }

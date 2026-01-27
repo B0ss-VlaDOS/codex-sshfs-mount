@@ -84,10 +84,12 @@ powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -Select "exampl
 ## Keepalive / опции
 
 По умолчанию:
-- `reconnect`
 - `ServerAliveInterval=15`
 - `ServerAliveCountMax=3`
-- `TCPKeepAlive=yes`
+- `StrictHostKeyChecking=no`
+- `UserKnownHostsFile=/dev/null`
+
+Если в `sshfs.configs` указан `password` строкой, скрипт также пробует использовать `password_stdin`, чтобы подключение прошло без интерактивного ввода пароля.
 
 Переопределение:
 ```powershell
@@ -100,5 +102,5 @@ powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -Interval 10 -C
 ## Примечания
 
 - Скрипт по умолчанию монтирует в свободную букву диска и создаёт junction `.\<host-name>\ -> X:\` (так надёжнее с WinFsp). Если монтирование в букву диска не сработало — скрипт пробует directory mount напрямую в `.\<host-name>\`.
-- Для первого подключения к хосту скрипт добавляет SSH-опцию `StrictHostKeyChecking=no`, чтобы не появлялся интерактивный вопрос `yes/no` про known hosts. При необходимости Вы можете переопределить это через `SSHFS_EXTRA_OPTS` (например, `StrictHostKeyChecking=accept-new` или `StrictHostKeyChecking=yes`).
-- Если в `sshfs.configs` указан `password` строкой — пароль будет подставлен без интерактивного ввода. Если `password` задан как boolean (секрет хранится вне `settings.json`) — скрипт не сможет извлечь пароль и может запросить его при подключении.
+- Для первого подключения к хосту скрипт отключает интерактивный вопрос `yes/no` про known hosts через `StrictHostKeyChecking=no` и `UserKnownHostsFile=/dev/null`. При необходимости Вы можете переопределить это через `SSHFS_EXTRA_OPTS` (например, `StrictHostKeyChecking=accept-new` или `StrictHostKeyChecking=yes`).
+- Если `password` задан как boolean (секрет хранится вне `settings.json`) — скрипт не сможет извлечь пароль и может запросить его при подключении.
