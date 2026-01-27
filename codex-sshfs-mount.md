@@ -116,4 +116,3 @@ SSHFS_EXTRA_OPTS="volname=myremote,follow_symlinks" ./codex-sshfs-mount.sh --sel
 ## Troubleshooting
 
 - `fuse: failed to exec mount program: Operation not permitted` (macOS): чаще всего не разрешён/не загружен macFUSE system extension, либо запуск идёт из ограниченной sandbox-среды.
-- Если VS Code хранит пароли в `settings.json` — помни, что это чувствительные данные (лучше ключи/agent, где возможно).
