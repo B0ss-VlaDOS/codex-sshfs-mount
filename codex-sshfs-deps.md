@@ -102,4 +102,8 @@ Get-Command sshfs
 Если `sshfs` не находится:
 - перезапусти терминал (чтобы обновился PATH),
 - проверь `where sshfs` (cmd) или `Get-Command sshfs` (PowerShell).
-
+- если SSHFS-Win установлен, но `sshfs.exe` всё равно не в PATH — запусти PowerShell-скрипт с явным путём:
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -SshfsPath "C:\Program Files\SSHFS-Win\bin\sshfs.exe"
+  ```
+- или задай переменную окружения `SSHFS_EXE` на путь к `sshfs.exe`.

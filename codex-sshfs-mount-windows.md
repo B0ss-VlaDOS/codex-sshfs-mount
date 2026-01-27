@@ -11,7 +11,7 @@
 - VS Code + установленный плагин **SSH FS** (в нём должны быть добавлены хосты)
 - PowerShell 5.1+ или PowerShell 7+
 - **WinFsp**
-- **SSHFS-Win** (даёт `sshfs.exe` в PATH)
+- **SSHFS-Win** (даёт `sshfs.exe`; нужен в `PATH` или укажи путь через `-SshfsPath` / `SSHFS_EXE`)
 
 ## Установка
 
@@ -30,6 +30,17 @@ choco install -y winfsp sshfs-win
 ```powershell
 Get-Command sshfs
 ```
+
+Если `Get-Command sshfs` ничего не выводит (а SSHFS-Win установлен):
+- Найди бинарник: `where sshfs` (cmd) или в типичных местах вроде `C:\Program Files\SSHFS-Win\bin\sshfs.exe`
+- Запусти скрипт с явным путём:
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -SshfsPath "C:\Program Files\SSHFS-Win\bin\sshfs.exe"
+  ```
+  или задай переменную окружения (пример):
+  ```powershell
+  setx SSHFS_EXE "C:\Program Files\SSHFS-Win\bin\sshfs.exe"
+  ```
 
 ## Запуск
 
@@ -87,4 +98,3 @@ powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -Interval 10 -C
 ## Примечания
 
 - Скрипт сначала пытается смонтировать в каталог `.\<host-name>\`. Если конкретная сборка SSHFS-Win не поддерживает directory mount — скрипт автоматически пробует монтирование в свободную букву диска и создаёт junction `.\<host-name>\ -> X:\`.
-

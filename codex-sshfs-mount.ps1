@@ -6,6 +6,7 @@ param(
   [int]$Interval = 15,
   [int]$Count = 3,
   [string]$DriveLetter = '',
+  [string]$SshfsPath = $env:SSHFS_EXE,
   [switch]$DryRun,
   [switch]$Help
 )
@@ -25,7 +26,7 @@ Usage: powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 [options
 Reads SSH FS configs from VS Code settings.json (sshfs.configs), lets you pick a host, and mounts it via
 SSHFS-Win (WinFsp) into a folder next to this script (.\<host-name>\).
 
-Options:
+  Options:
   -SettingsPath PATH       Path to VS Code settings.json (JSON/JSONC). Auto-detected if omitted.
   -Select NAME|NUMBER      Non-interactive selection (match by name, or 1-based index).
   -Force                   If already mounted, unmount first.
@@ -33,11 +34,13 @@ Options:
   -Interval SECONDS        SSH keepalive interval (default: 15).
   -Count N                 SSH keepalive max missed (default: 3).
   -DriveLetter X           Prefer drive letter (e.g. Z). If omitted, auto-pick when needed.
+  -SshfsPath PATH          Path to sshfs.exe (use if sshfs isn't in PATH).
   -DryRun                  Print sshfs command and exit.
   -Help                    Show help.
 
-Environment:
+  Environment:
   VSCODE_SETTINGS          Same as -SettingsPath.
+  SSHFS_EXE                Same as -SshfsPath.
   SSHFS_EXTRA_OPTS         Extra sshfs -o options (comma-separated), appended to defaults.
 '@
 }
@@ -132,8 +135,53 @@ function Load-Jsonc([string]$Path) {
 }
 
 function Ensure-Dependencies {
-  $sshfs = Get-Command sshfs -ErrorAction SilentlyContinue
-  if ($sshfs) { return }
+  function Resolve-SshfsExe([string]$PathHint) {
+    if ($PathHint) {
+      $p = [Environment]::ExpandEnvironmentVariables([string]$PathHint)
+      if (Test-Path -LiteralPath $p -PathType Leaf) { return (Resolve-Path -LiteralPath $p).Path }
+      Die "sshfs.exe not found at -SshfsPath: $PathHint"
+    }
+
+    $sshfs = Get-Command sshfs -ErrorAction SilentlyContinue
+    if ($sshfs -and $sshfs.Source) { return [string]$sshfs.Source }
+
+    $candidates = @()
+    if ($env:ProgramFiles) {
+      $candidates += (Join-Path $env:ProgramFiles 'SSHFS-Win\bin\sshfs.exe')
+      $candidates += (Join-Path $env:ProgramFiles 'SSHFS-Win\bin\sshfs-win.exe')
+      $candidates += (Join-Path $env:ProgramFiles 'SSHFS-Win\sshfs.exe')
+      $candidates += (Join-Path $env:ProgramFiles 'SSHFS-Win\sshfs-win.exe')
+      $candidates += (Join-Path $env:ProgramFiles 'WinFsp\bin\sshfs.exe')
+    }
+    $pf86 = ${env:ProgramFiles(x86)}
+    if ($pf86) {
+      $candidates += (Join-Path $pf86 'SSHFS-Win\bin\sshfs.exe')
+      $candidates += (Join-Path $pf86 'SSHFS-Win\bin\sshfs-win.exe')
+      $candidates += (Join-Path $pf86 'SSHFS-Win\sshfs.exe')
+      $candidates += (Join-Path $pf86 'SSHFS-Win\sshfs-win.exe')
+      $candidates += (Join-Path $pf86 'WinFsp\bin\sshfs.exe')
+    }
+    if ($env:LOCALAPPDATA) {
+      $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\SSHFS-Win\bin\sshfs.exe')
+      $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\SSHFS-Win\bin\sshfs-win.exe')
+      $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\SSHFS-Win\sshfs.exe')
+      $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\SSHFS-Win\sshfs-win.exe')
+    }
+
+    foreach ($p in $candidates) {
+      if (Test-Path -LiteralPath $p -PathType Leaf) { return $p }
+    }
+
+    return $null
+  }
+
+  $script:SshfsCmd = Resolve-SshfsExe $SshfsPath
+  if ($script:SshfsCmd) {
+    if (-not (Get-Command sshfs -ErrorAction SilentlyContinue)) {
+      Write-Host ("Using sshfs.exe from: " + $script:SshfsCmd)
+    }
+    return
+  }
 
   Write-Host "sshfs not found in PATH (Windows needs WinFsp + SSHFS-Win)."
   if (Get-Command winget -ErrorAction SilentlyContinue) {
@@ -149,6 +197,11 @@ function Ensure-Dependencies {
     Write-Host "  2) SSHFS-Win"
     Write-Host "Then ensure 'sshfs.exe' is in PATH and re-run."
   }
+
+  Write-Host ""
+  Write-Host "If SSHFS-Win is installed but sshfs.exe isn't in PATH:"
+  Write-Host "  1) Find it: where sshfs   (in cmd)  OR  Get-Command sshfs (in PowerShell)"
+  Write-Host "  2) Re-run with: -SshfsPath 'C:\\path\\to\\sshfs.exe'  (or set env SSHFS_EXE)"
 
   if ($DryRun) {
     Write-Warning "sshfs is not installed; continuing because -DryRun was used."
@@ -353,14 +406,15 @@ if ($port) { $cmdArgs += @('-p', $port) }
 $cmdArgs += @($remoteSpec, $mountDir, '-o', $optStr)
 
 if ($DryRun) {
-  $printed = @('sshfs') + $cmdArgs
+  $sshfsForPrint = if ($script:SshfsCmd) { $script:SshfsCmd } else { 'sshfs' }
+  $printed = @($sshfsForPrint) + $cmdArgs
   Write-Host ('sshfs command: ' + ($printed | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } } -join ' '))
   exit 0
 }
 
 function Try-MountToDir {
   try {
-    & sshfs @cmdArgs 2>&1 | ForEach-Object { $_ } | Out-Host
+    & $script:SshfsCmd @cmdArgs 2>&1 | ForEach-Object { $_ } | Out-Host
     return $true
   } catch {
     return $false
@@ -380,7 +434,7 @@ function Try-MountToDriveAndJunction {
   if ($port) { $args += @('-p', $port) }
   $args += @($remoteSpec, ($letter + ':'), '-o', $optStr)
 
-  & sshfs @args 2>&1 | ForEach-Object { $_ } | Out-Host
+  & $script:SshfsCmd @args 2>&1 | ForEach-Object { $_ } | Out-Host
 
   # Create junction: .\<host-name> -> X:\
   Remove-JunctionOrDir $mountDir
