@@ -34,8 +34,8 @@ Get-Command sshfs
 Важно: после установки WinFsp/SSHFS-Win **закройте и заново откройте терминал и VS Code**. Если `sshfs` всё равно не находится — выполните **выключение и включение Windows** (полное Shut down → Power on), а не Restart.
 
 Если `Get-Command sshfs` ничего не выводит (а SSHFS-Win установлен):
-- Найди бинарник: `where sshfs` (cmd) или в типичных местах вроде `C:\Program Files\SSHFS-Win\bin\sshfs.exe`
-- Запусти скрипт с явным путём:
+- Найдите бинарник: `where sshfs` (cmd) или в типичных местах вроде `C:\Program Files\SSHFS-Win\bin\sshfs.exe`
+- Запустите скрипт с явным путём:
   ```powershell
   powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -SshfsPath "C:\Program Files\SSHFS-Win\bin\sshfs.exe"
   ```
@@ -100,3 +100,5 @@ powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -Interval 10 -C
 ## Примечания
 
 - Скрипт сначала пытается смонтировать в каталог `.\<host-name>\`. Если конкретная сборка SSHFS-Win не поддерживает directory mount — скрипт автоматически пробует монтирование в свободную букву диска и создаёт junction `.\<host-name>\ -> X:\`.
+- Для первого подключения к хосту скрипт добавляет SSH-опцию `StrictHostKeyChecking=no`, чтобы не появлялся интерактивный вопрос `yes/no` про known hosts. При необходимости Вы можете переопределить это через `SSHFS_EXTRA_OPTS` (например, `StrictHostKeyChecking=accept-new` или `StrictHostKeyChecking=yes`).
+- Если в `sshfs.configs` указан `password` строкой — пароль будет подставлен через `SSH_ASKPASS` (без интерактивного ввода). Если `password` задан как boolean (секрет хранится вне `settings.json`) — скрипт не сможет извлечь пароль и может запросить его при подключении.

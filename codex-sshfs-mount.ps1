@@ -26,6 +26,23 @@ function Get-PropValue($Obj, [string]$Name) {
   return $null
 }
 
+function Resolve-PathLike([string]$PathLike, [string]$BaseDir) {
+  if (-not $PathLike) { return $null }
+
+  $p = [Environment]::ExpandEnvironmentVariables([string]$PathLike)
+  if ($p.StartsWith('~')) {
+    $home = $env:USERPROFILE
+    if (-not $home) { $home = $HOME }
+    if ($home) { $p = (Join-Path $home $p.TrimStart('~', '\', '/')) }
+  }
+
+  if ($BaseDir -and (-not ([IO.Path]::IsPathRooted($p)))) {
+    $p = Join-Path $BaseDir $p
+  }
+
+  try { return (Resolve-Path -LiteralPath $p -ErrorAction Stop).Path } catch { return $p }
+}
+
 function Usage() {
   Write-Host @'
 Usage: powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 [options]
@@ -225,6 +242,53 @@ function Safe-Name([string]$Name) {
   return $s
 }
 
+function Invoke-Sshfs {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string[]]$Arguments,
+    [string]$Password = ''
+  )
+
+  if (-not $script:SshfsCmd) { Die "internal error: sshfs path is not resolved" }
+
+  if ($Password) {
+    $tempDir = $env:TEMP
+    if (-not $tempDir) { $tempDir = [IO.Path]::GetTempPath() }
+    $askpass = Join-Path $tempDir ("codex-sshfs-askpass-" + ([guid]::NewGuid().ToString('N')) + ".cmd")
+
+    # Use PowerShell inside the .cmd to avoid cmd metacharacter issues (&, |, <, >, etc.) in passwords.
+    $askpassContent = "@echo off`r`n" +
+      'powershell -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -Command "[Console]::WriteLine($env:SSHFS_PASSWORD)"' +
+      "`r`n"
+    $askpassContent | Set-Content -LiteralPath $askpass -Encoding ASCII
+
+    $oldAskpass = $env:SSH_ASKPASS
+    $oldAskpassReq = $env:SSH_ASKPASS_REQUIRE
+    $oldDisplay = $env:DISPLAY
+    $oldPw = $env:SSHFS_PASSWORD
+
+    try {
+      $env:SSHFS_PASSWORD = $Password
+      $env:SSH_ASKPASS = $askpass
+      $env:SSH_ASKPASS_REQUIRE = 'force'
+      if (-not $env:DISPLAY) { $env:DISPLAY = '1' }
+
+      & $script:SshfsCmd @Arguments
+      return $LASTEXITCODE
+    } finally {
+      try { Remove-Item -LiteralPath $askpass -Force } catch { }
+
+      if ($null -ne $oldAskpass) { $env:SSH_ASKPASS = $oldAskpass } else { Remove-Item env:SSH_ASKPASS -ErrorAction SilentlyContinue }
+      if ($null -ne $oldAskpassReq) { $env:SSH_ASKPASS_REQUIRE = $oldAskpassReq } else { Remove-Item env:SSH_ASKPASS_REQUIRE -ErrorAction SilentlyContinue }
+      if ($null -ne $oldDisplay) { $env:DISPLAY = $oldDisplay } else { Remove-Item env:DISPLAY -ErrorAction SilentlyContinue }
+      if ($null -ne $oldPw) { $env:SSHFS_PASSWORD = $oldPw } else { Remove-Item env:SSHFS_PASSWORD -ErrorAction SilentlyContinue }
+    }
+  }
+
+  & $script:SshfsCmd @Arguments
+  return $LASTEXITCODE
+}
+
 function Get-FreeDriveLetter {
   $used = (Get-PSDrive -PSProvider FileSystem).Name
   foreach ($c in [char[]]([char]'Z'..[char]'D')) {
@@ -352,9 +416,34 @@ $remoteHost = [string](Get-PropValue $cfg 'host')
 $userProp = Get-PropValue $cfg 'username'
 $portProp = Get-PropValue $cfg 'port'
 $rootProp = Get-PropValue $cfg 'root'
+$passwordProp = Get-PropValue $cfg 'password'
+$passphraseProp = Get-PropValue $cfg 'passphrase'
+$keyPathProp = (Get-PropValue $cfg 'privateKeyPath')
+if (-not $keyPathProp) { $keyPathProp = (Get-PropValue $cfg 'privateKey') }
+if (-not $keyPathProp) { $keyPathProp = (Get-PropValue $cfg 'identityFile') }
 $user = if ($userProp) { [string]$userProp } else { '' }
 $port = if ($portProp) { [string]$portProp } else { '' }
 $root = if ($rootProp) { [string]$rootProp } else { '' }
+
+$askpassSecret = ''
+if ($passwordProp -is [string]) {
+  $askpassSecret = [string]$passwordProp
+} elseif ($passwordProp -is [bool]) {
+  # Some setups store the actual password in VS Code secret storage and keep a boolean flag in settings.json.
+  # This script intentionally does not try to read VS Code secrets to keep dependencies minimal.
+  if ($passwordProp) {
+    Write-Warning "Password is set as a boolean in sshfs.configs. The actual secret is not readable from settings.json; you may be prompted for a password."
+  }
+}
+
+if (-not $askpassSecret -and ($passphraseProp -is [string]) -and [string]$passphraseProp) {
+  $askpassSecret = [string]$passphraseProp
+}
+
+$keyPath = ''
+if ($keyPathProp -is [string] -and [string]$keyPathProp) {
+  $keyPath = Resolve-PathLike ([string]$keyPathProp) $settingsDir
+}
 
 $remote = if ($user) { "$user@$remoteHost" } else { $remoteHost }
 $remoteSpec = if ($root) { "$remote`:$root" } else { "$remote`:" }
@@ -363,9 +452,17 @@ $opts = @(
   "reconnect",
   "ServerAliveInterval=$Interval",
   "ServerAliveCountMax=$Count",
-  "TCPKeepAlive=yes"
+  "TCPKeepAlive=yes",
+  # Avoid interactive "Are you sure you want to continue connecting (yes/no)?" prompts.
+  # Note: this is less strict than default; override via SSHFS_EXTRA_OPTS if desired.
+  "StrictHostKeyChecking=no"
 )
 if ($env:SSHFS_EXTRA_OPTS) { $opts += [string]$env:SSHFS_EXTRA_OPTS }
+$opts = @($opts | Where-Object { $_ })
+
+if ($keyPath) {
+  $opts += @("IdentityFile=$keyPath", "IdentitiesOnly=yes")
+}
 $optStr = ($opts -join ',')
 
 function Write-State($obj) {
@@ -436,8 +533,8 @@ if ($DryRun) {
 
 function Try-MountToDir {
   try {
-    & $script:SshfsCmd @cmdArgs 2>&1 | ForEach-Object { $_ } | Out-Host
-    return $true
+    $rc = Invoke-Sshfs -Arguments $cmdArgs -Password $askpassSecret
+    return ($rc -eq 0)
   } catch {
     return $false
   }
@@ -456,7 +553,8 @@ function Try-MountToDriveAndJunction {
   if ($port) { $driveArgs += @('-p', $port) }
   $driveArgs += @($remoteSpec, ($letter + ':'), '-o', $optStr)
 
-  & $script:SshfsCmd @driveArgs 2>&1 | ForEach-Object { $_ } | Out-Host
+  $rc = Invoke-Sshfs -Arguments $driveArgs -Password $askpassSecret
+  if ($rc -ne 0) { return $false }
 
   # Create junction: .\<host-name> -> X:\
   Remove-JunctionOrDir $mountDir

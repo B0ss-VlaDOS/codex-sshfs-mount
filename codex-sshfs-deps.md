@@ -105,7 +105,7 @@ Get-Command sshfs
 - закройте терминал и откройте заново (чтобы обновился `PATH`),
 - закройте все окна VS Code и откройте снова (он наследует `PATH` при запуске),
 - если не помогло — выполните **выключение и включение Windows** (полное Shut down → Power on), а не Restart,
-- проверь `where sshfs` (cmd) или `Get-Command sshfs` (PowerShell).
+- проверьте `where sshfs` (cmd) или `Get-Command sshfs` (PowerShell).
 - если SSHFS-Win установлен, но `sshfs.exe` всё равно не в PATH — запустите PowerShell-скрипт с явным путём:
   ```powershell
   powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -SshfsPath "C:\Program Files\SSHFS-Win\bin\sshfs.exe"
