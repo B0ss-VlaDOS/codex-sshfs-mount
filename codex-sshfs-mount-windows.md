@@ -99,6 +99,6 @@ powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -Interval 10 -C
 
 ## Примечания
 
-- Скрипт сначала пытается смонтировать в каталог `.\<host-name>\`. Если конкретная сборка SSHFS-Win не поддерживает directory mount — скрипт автоматически пробует монтирование в свободную букву диска и создаёт junction `.\<host-name>\ -> X:\`.
+- Скрипт по умолчанию монтирует в свободную букву диска и создаёт junction `.\<host-name>\ -> X:\` (так надёжнее с WinFsp). Если монтирование в букву диска не сработало — скрипт пробует directory mount напрямую в `.\<host-name>\`.
 - Для первого подключения к хосту скрипт добавляет SSH-опцию `StrictHostKeyChecking=no`, чтобы не появлялся интерактивный вопрос `yes/no` про known hosts. При необходимости Вы можете переопределить это через `SSHFS_EXTRA_OPTS` (например, `StrictHostKeyChecking=accept-new` или `StrictHostKeyChecking=yes`).
 - Если в `sshfs.configs` указан `password` строкой — пароль будет подставлен через `SSH_ASKPASS` (без интерактивного ввода). Если `password` задан как boolean (секрет хранится вне `settings.json`) — скрипт не сможет извлечь пароль и может запросить его при подключении.

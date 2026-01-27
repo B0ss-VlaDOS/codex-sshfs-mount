@@ -292,7 +292,8 @@ function Invoke-Sshfs {
 function Get-FreeDriveLetter {
   $used = (Get-PSDrive -PSProvider FileSystem).Name
   foreach ($c in [char[]]([char]'Z'..[char]'D')) {
-    if ($used -notcontains $c) { return $c }
+    $letter = ([string]$c).ToUpperInvariant()
+    if ($used -notcontains $letter) { return $letter }
   }
   return $null
 }
@@ -313,6 +314,16 @@ function Remove-JunctionOrDir([string]$Path) {
     } else {
       Remove-Item -LiteralPath $Path -Recurse -Force
     }
+  }
+}
+
+function Test-IsEmptyDir([string]$Path) {
+  if (-not (Test-Path -LiteralPath $Path -PathType Container)) { return $true }
+  try {
+    $one = Get-ChildItem -LiteralPath $Path -Force -ErrorAction Stop | Select-Object -First 1
+    return ($null -eq $one)
+  } catch {
+    return $false
   }
 }
 
@@ -520,14 +531,42 @@ if (Test-Path -LiteralPath $mountDir -PathType Container) {
   New-Item -ItemType Directory -Path $mountDir | Out-Null
 }
 
+if (-not $Force) {
+  if (Test-IsJunction $mountDir) {
+    Die "mount dir exists as a junction but no state file was found: $mountDir`nRe-run with -Force to remount."
+  }
+  if (-not (Test-IsEmptyDir $mountDir)) {
+    Die "mount dir already exists and is not empty: $mountDir`nRe-run with -Force to replace it."
+  }
+}
+
 $cmdArgs = @()
 if ($port) { $cmdArgs += @('-p', $port) }
 $cmdArgs += @($remoteSpec, $mountDir, '-o', $optStr)
 
 if ($DryRun) {
   $sshfsForPrint = if ($script:SshfsCmd) { $script:SshfsCmd } else { 'sshfs' }
-  $printed = @($sshfsForPrint) + $cmdArgs
-  Write-Host ('sshfs command: ' + ($printed | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } } -join ' '))
+  $fmt = {
+    param([string[]]$arr)
+    ($arr | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' '
+  }
+
+  $letterForPrint = if ($DriveLetter) { ([string]$DriveLetter).TrimEnd(':').Trim() } else { Get-FreeDriveLetter }
+  if ($letterForPrint) { $letterForPrint = $letterForPrint.ToUpperInvariant() }
+
+  if ($letterForPrint) {
+    $driveArgsForPrint = @()
+    if ($port) { $driveArgsForPrint += @('-p', $port) }
+    $driveArgsForPrint += @($remoteSpec, ($letterForPrint + ':'), '-o', $optStr)
+    $printedDrive = @($sshfsForPrint) + $driveArgsForPrint
+    Write-Host ('sshfs command (drive): ' + (& $fmt $printedDrive))
+    Write-Host ('junction target: ' + $mountDir + ' -> ' + $letterForPrint + ':\')
+  } else {
+    Write-Host "sshfs command (drive): <no free drive letter available>"
+  }
+
+  $printedDir = @($sshfsForPrint) + $cmdArgs
+  Write-Host ('sshfs command (dir fallback): ' + (& $fmt $printedDir))
   exit 0
 }
 
@@ -542,7 +581,12 @@ function Try-MountToDir {
 
 function Try-MountToDriveAndJunction {
   $letter = ''
-  if ($DriveLetter) { $letter = $DriveLetter.TrimEnd(':') } else { $letter = Get-FreeDriveLetter }
+  if ($DriveLetter) {
+    $letter = ([string]$DriveLetter).TrimEnd(':').Trim()
+  } else {
+    $letter = Get-FreeDriveLetter
+  }
+  if ($letter) { $letter = $letter.ToUpperInvariant() }
   if (-not $letter) { Die "no free drive letter available" }
 
   # Remove empty dir and replace with junction to X:\
@@ -551,7 +595,8 @@ function Try-MountToDriveAndJunction {
 
   $driveArgs = @()
   if ($port) { $driveArgs += @('-p', $port) }
-  $driveArgs += @($remoteSpec, ($letter + ':'), '-o', $optStr)
+  $driveMount = ($letter + ':')
+  $driveArgs += @($remoteSpec, $driveMount, '-o', $optStr)
 
   $rc = Invoke-Sshfs -Arguments $driveArgs -Password $askpassSecret
   if ($rc -ne 0) { return $false }
@@ -559,16 +604,16 @@ function Try-MountToDriveAndJunction {
   # Create junction: .\<host-name> -> X:\
   Remove-JunctionOrDir $mountDir
   cmd /c "mklink /J ""$mountDir"" ""$letter`:\\""" | Out-Null
-  $script:MountedDriveLetter = $letter
+  $script:MountedDriveLetter = [string]$letter
 
   return $true
 }
 
 $script:MountedDriveLetter = $null
-$mounted = Try-MountToDir
+$mounted = Try-MountToDriveAndJunction
 if (-not $mounted) {
-  # Fallback for setups that only support drive letters.
-  $mounted = Try-MountToDriveAndJunction
+  # Fallback for setups that support directory mounts.
+  $mounted = Try-MountToDir
 }
 
 if (-not $mounted) { Die "sshfs mount failed" }
