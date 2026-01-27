@@ -19,6 +19,13 @@ function Die([string]$Message) {
   exit 1
 }
 
+function Get-PropValue($Obj, [string]$Name) {
+  if ($null -eq $Obj) { return $null }
+  $p = $Obj.PSObject.Properties[$Name]
+  if ($null -ne $p) { return $p.Value }
+  return $null
+}
+
 function Usage() {
   Write-Host @'
 Usage: powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 [options]
@@ -266,10 +273,12 @@ $settingsDir = Split-Path -Parent $SettingsPath
 $settings = Load-Jsonc $SettingsPath
 
 $configs = @()
-if ($settings.'sshfs.configs') { $configs += @($settings.'sshfs.configs') }
+$mainConfigs = Get-PropValue $settings 'sshfs.configs'
+if ($null -ne $mainConfigs) { $configs += @($mainConfigs) }
 
-if ($settings.'sshfs.configpaths') {
-  foreach ($p in @($settings.'sshfs.configpaths')) {
+$configPaths = Get-PropValue $settings 'sshfs.configpaths'
+if ($null -ne $configPaths) {
+  foreach ($p in @($configPaths)) {
     if (-not $p) { continue }
     $p2 = [Environment]::ExpandEnvironmentVariables([string]$p)
     if (-not ([IO.Path]::IsPathRooted($p2))) { $p2 = Join-Path $settingsDir $p2 }
@@ -284,15 +293,21 @@ if ($settings.'sshfs.configpaths') {
   }
 }
 
-$configs = @($configs | Where-Object { $_ -and $_.host })
+$configs = @($configs | Where-Object { $_ -and (Get-PropValue $_ 'host') })
 if ($configs.Count -eq 0) { Die "no sshfs.configs found in $SettingsPath" }
 
 function Get-Display($cfg) {
-  $name = if ($cfg.name) { [string]$cfg.name } else { [string]$cfg.host }
-  $host = [string]$cfg.host
-  $user = if ($cfg.username) { [string]$cfg.username } else { '' }
-  $port = if ($cfg.port) { [string]$cfg.port } else { '' }
-  $root = if ($cfg.root) { [string]$cfg.root } else { '' }
+  $nameProp = Get-PropValue $cfg 'name'
+  $hostProp = Get-PropValue $cfg 'host'
+  $userProp = Get-PropValue $cfg 'username'
+  $portProp = Get-PropValue $cfg 'port'
+  $rootProp = Get-PropValue $cfg 'root'
+
+  $name = if ($nameProp) { [string]$nameProp } else { [string]$hostProp }
+  $host = [string]$hostProp
+  $user = if ($userProp) { [string]$userProp } else { '' }
+  $port = if ($portProp) { [string]$portProp } else { '' }
+  $root = if ($rootProp) { [string]$rootProp } else { '' }
 
   $summary = ''
   if ($user -and $host) { $summary = "$user@$host" } else { $summary = $host }
@@ -306,7 +321,9 @@ function Pick-Index {
   if ($Select) {
     if ($Select -match '^\d+$') { return [int]$Select }
     for ($i = 0; $i -lt $configs.Count; $i++) {
-      $n = if ($configs[$i].name) { [string]$configs[$i].name } else { [string]$configs[$i].host }
+      $nProp = Get-PropValue $configs[$i] 'name'
+      $hProp = Get-PropValue $configs[$i] 'host'
+      $n = if ($nProp) { [string]$nProp } else { [string]$hProp }
       if ($n -eq $Select) { return $i + 1 }
     }
     Die "no host matches -Select '$Select'"
@@ -324,15 +341,20 @@ $selected = Pick-Index
 if ($selected -lt 1 -or $selected -gt $configs.Count) { Die "selection out of range: $selected" }
 $cfg = $configs[$selected - 1]
 
-$name = if ($cfg.name) { [string]$cfg.name } else { [string]$cfg.host }
+$nameProp = Get-PropValue $cfg 'name'
+$hostProp = Get-PropValue $cfg 'host'
+$name = if ($nameProp) { [string]$nameProp } else { [string]$hostProp }
 $safeName = Safe-Name $name
 $mountDir = Join-Path $PSScriptRoot $safeName
 $statePath = Join-Path $PSScriptRoot (".codex-sshfs-" + $safeName + ".json")
 
-$host = [string]$cfg.host
-$user = if ($cfg.username) { [string]$cfg.username } else { '' }
-$port = if ($cfg.port) { [string]$cfg.port } else { '' }
-$root = if ($cfg.root) { [string]$cfg.root } else { '' }
+$host = [string](Get-PropValue $cfg 'host')
+$userProp = Get-PropValue $cfg 'username'
+$portProp = Get-PropValue $cfg 'port'
+$rootProp = Get-PropValue $cfg 'root'
+$user = if ($userProp) { [string]$userProp } else { '' }
+$port = if ($portProp) { [string]$portProp } else { '' }
+$root = if ($rootProp) { [string]$rootProp } else { '' }
 
 $remote = if ($user) { "$user@$host" } else { $host }
 $remoteSpec = if ($root) { "$remote`:$root" } else { "$remote`:" }
