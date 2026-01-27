@@ -19,7 +19,7 @@ function Die([string]$Message) {
 }
 
 function Usage() {
-@'
+  Write-Host @'
 Usage: powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 [options]
 
 Reads SSH FS configs from VS Code settings.json (sshfs.configs), lets you pick a host, and mounts it via
@@ -39,7 +39,7 @@ Options:
 Environment:
   VSCODE_SETTINGS          Same as -SettingsPath.
   SSHFS_EXTRA_OPTS         Extra sshfs -o options (comma-separated), appended to defaults.
-'@ | Write-Host
+'@
 }
 
 if ($Help) { Usage; exit 0 }
@@ -384,7 +384,7 @@ function Try-MountToDriveAndJunction {
 
   # Create junction: .\<host-name> -> X:\
   Remove-JunctionOrDir $mountDir
-  cmd /c "mklink /J ""$mountDir"" ""$letter`:\"" | Out-Null
+  cmd /c "mklink /J ""$mountDir"" ""$letter`:\\""" | Out-Null
   $script:MountedDriveLetter = $letter
 
   return $true
