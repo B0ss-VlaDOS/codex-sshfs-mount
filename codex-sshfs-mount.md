@@ -23,7 +23,7 @@
 ```sh
 brew install --cask macfuse
 ```
-2) Разрешить system extension (System Settings → Privacy & Security → Allow) и при необходимости перезагрузи Mac.
+2) Разрешите system extension (System Settings → Privacy & Security → Allow) и при необходимости перезагрузите Mac.
 3) `sshfs` (через `sshfs-mac`):
 ```sh
 brew install gromgit/fuse/sshfs-mac

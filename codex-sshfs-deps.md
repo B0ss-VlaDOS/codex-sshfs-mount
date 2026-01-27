@@ -8,19 +8,21 @@
 
 1) **VS Code**
 2) **Плагин VS Code: SSH FS**
-   - Установи расширение **SSH FS**
-   - Добавь хосты в настройку `sshfs.configs` (в `settings.json` VS Code)
+   - Установите расширение **SSH FS**
+   - Добавьте хосты в настройку `sshfs.configs` (в `settings.json` VS Code)
 
 Проверка, что хосты видны скрипту:
-- macOS/Linux: запусти `./codex-sshfs-mount.sh` и убедись, что выводится список `1) ...`
-- Windows: запусти `powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1` и убедись, что выводится список `1) ...`
+- macOS/Linux: запустите `./codex-sshfs-mount.sh` и убедитесь, что выводится список `1) ...`
+- Windows: запустите `powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1` и убедитесь, что выводится список `1) ...`
+
+Важно: после установки зависимостей **закройте и заново откройте терминал/VS Code** (они подхватывают `PATH` при запуске). На Windows часто помогает именно **выключение и включение** (полное Shut down → Power on), а не перезагрузка (Restart).
 
 ---
 
 ## macOS (для `codex-sshfs-mount.sh`)
 
 ### 1) Homebrew (если ещё нет)
-Поставь Homebrew с официального сайта Homebrew.
+Установите Homebrew с официального сайта Homebrew.
 
 ### 2) macFUSE (обязательно)
 ```sh
@@ -28,8 +30,8 @@ brew install --cask macfuse
 ```
 
 После установки:
-- `System Settings` → `Privacy & Security` → нажми `Allow` для macFUSE system extension
-- Перезагрузи Mac, если система попросит
+- `System Settings` → `Privacy & Security` → нажмите `Allow` для macFUSE system extension
+- Перезагрузите Mac, если система попросит (часто требуется)
 
 Проверка:
 ```sh
@@ -100,10 +102,12 @@ Get-Command sshfs
 ```
 
 Если `sshfs` не находится:
-- перезапусти терминал (чтобы обновился PATH),
+- закройте терминал и откройте заново (чтобы обновился `PATH`),
+- закройте все окна VS Code и откройте снова (он наследует `PATH` при запуске),
+- если не помогло — выполните **выключение и включение Windows** (полное Shut down → Power on), а не Restart,
 - проверь `where sshfs` (cmd) или `Get-Command sshfs` (PowerShell).
-- если SSHFS-Win установлен, но `sshfs.exe` всё равно не в PATH — запусти PowerShell-скрипт с явным путём:
+- если SSHFS-Win установлен, но `sshfs.exe` всё равно не в PATH — запустите PowerShell-скрипт с явным путём:
   ```powershell
   powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -SshfsPath "C:\Program Files\SSHFS-Win\bin\sshfs.exe"
   ```
-- или задай переменную окружения `SSHFS_EXE` на путь к `sshfs.exe`.
+- или задайте переменную окружения `SSHFS_EXE` на путь к `sshfs.exe`.

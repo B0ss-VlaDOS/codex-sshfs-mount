@@ -11,7 +11,7 @@
 - VS Code + установленный плагин **SSH FS** (в нём должны быть добавлены хосты)
 - PowerShell 5.1+ или PowerShell 7+
 - **WinFsp**
-- **SSHFS-Win** (даёт `sshfs.exe`; нужен в `PATH` или укажи путь через `-SshfsPath` / `SSHFS_EXE`)
+- **SSHFS-Win** (даёт `sshfs.exe`; нужен в `PATH` или укажите путь через `-SshfsPath` / `SSHFS_EXE`)
 
 ## Установка
 
@@ -21,7 +21,7 @@ winget install WinFsp.WinFsp
 winget install SSHFS-Win.SSHFS-Win
 ```
 
-### Через Chocolatey (если используешь)
+### Через Chocolatey (если Вы используете)
 ```powershell
 choco install -y winfsp sshfs-win
 ```
@@ -31,13 +31,15 @@ choco install -y winfsp sshfs-win
 Get-Command sshfs
 ```
 
+Важно: после установки WinFsp/SSHFS-Win **закройте и заново откройте терминал и VS Code**. Если `sshfs` всё равно не находится — выполните **выключение и включение Windows** (полное Shut down → Power on), а не Restart.
+
 Если `Get-Command sshfs` ничего не выводит (а SSHFS-Win установлен):
 - Найди бинарник: `where sshfs` (cmd) или в типичных местах вроде `C:\Program Files\SSHFS-Win\bin\sshfs.exe`
 - Запусти скрипт с явным путём:
   ```powershell
   powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -SshfsPath "C:\Program Files\SSHFS-Win\bin\sshfs.exe"
   ```
-  или задай переменную окружения (пример):
+  или задайте переменную окружения (пример):
   ```powershell
   setx SSHFS_EXE "C:\Program Files\SSHFS-Win\bin\sshfs.exe"
   ```

@@ -183,7 +183,7 @@ function Ensure-Dependencies {
     return
   }
 
-  Write-Host "sshfs not found in PATH (Windows needs WinFsp + SSHFS-Win)."
+  Write-Host "sshfs.exe not found (not in PATH and not in common install locations). Windows needs WinFsp + SSHFS-Win."
   if (Get-Command winget -ErrorAction SilentlyContinue) {
     Write-Host "Install (recommended):"
     Write-Host "  winget install WinFsp.WinFsp"
