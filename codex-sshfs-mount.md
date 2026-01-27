@@ -47,6 +47,10 @@ Arch:
 sudo pacman -Sy --noconfirm sshfs
 ```
 
+## Windows 10/11
+
+См. `codex-sshfs-deps.md` и `codex-sshfs-mount-windows.md`.
+
 ## Запуск
 
 Из папки, где лежит скрипт (интерактивный режим):
