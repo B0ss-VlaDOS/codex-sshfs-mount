@@ -1,3 +1,16 @@
+param(
+  [string]$SettingsPath = $env:VSCODE_SETTINGS,
+  [string]$Select = '',
+  [switch]$Force,
+  [switch]$Unmount,
+  [int]$Interval = 15,
+  [int]$Count = 3,
+  [string]$DriveLetter = '',
+  [switch]$DryRun,
+  [switch]$Help
+)
+
+Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 function Die([string]$Message) {
@@ -28,18 +41,6 @@ Environment:
   SSHFS_EXTRA_OPTS         Extra sshfs -o options (comma-separated), appended to defaults.
 '@ | Write-Host
 }
-
-param(
-  [string]$SettingsPath = $env:VSCODE_SETTINGS,
-  [string]$Select = '',
-  [switch]$Force,
-  [switch]$Unmount,
-  [int]$Interval = 15,
-  [int]$Count = 3,
-  [string]$DriveLetter = '',
-  [switch]$DryRun,
-  [switch]$Help
-)
 
 if ($Help) { Usage; exit 0 }
 
@@ -127,7 +128,7 @@ function Strip-Jsonc([string]$Text) {
 function Load-Jsonc([string]$Path) {
   $raw = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
   $clean = Strip-Jsonc $raw
-  return $clean | ConvertFrom-Json -Depth 64
+  return $clean | ConvertFrom-Json
 }
 
 function Ensure-Dependencies {
@@ -221,9 +222,9 @@ if ($settings.'sshfs.configpaths') {
     if (-not ([IO.Path]::IsPathRooted($p2))) { $p2 = Join-Path $settingsDir $p2 }
     if (Test-Path -LiteralPath $p2) {
       $extra = Load-Jsonc $p2
-      if ($extra -is [System.Collections.IDictionary] -and $extra.Contains('sshfs.configs')) {
+      if ($extra -and $extra.PSObject.Properties.Match('sshfs.configs').Count -gt 0) {
         $configs += @($extra.'sshfs.configs')
-      } elseif ($extra -is [System.Collections.IEnumerable]) {
+      } elseif ($extra -is [System.Array]) {
         $configs += @($extra)
       }
     }
@@ -298,7 +299,7 @@ function Write-State($obj) {
 
 function Read-State {
   if (-not (Test-Path -LiteralPath $statePath)) { return $null }
-  try { return (Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json -Depth 10) } catch { return $null }
+  try { return (Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json) } catch { return $null }
 }
 
 function Unmount-ByState {
@@ -384,18 +385,12 @@ function Try-MountToDriveAndJunction {
   # Create junction: .\<host-name> -> X:\
   Remove-JunctionOrDir $mountDir
   cmd /c "mklink /J ""$mountDir"" ""$letter`:\"" | Out-Null
-
-  Write-State ([pscustomobject]@{
-      Name       = $name
-      MountDir   = $mountDir
-      DriveLetter= $letter
-      Remote     = $remoteSpec
-      CreatedAt  = (Get-Date).ToString('o')
-    })
+  $script:MountedDriveLetter = $letter
 
   return $true
 }
 
+$script:MountedDriveLetter = $null
 $mounted = Try-MountToDir
 if (-not $mounted) {
   # Fallback for setups that only support drive letters.
@@ -409,11 +404,10 @@ if (-not (Test-Path -LiteralPath $mountDir)) { Die "mount completed but mount di
 Write-State ([pscustomobject]@{
     Name      = $name
     MountDir  = $mountDir
-    DriveLetter = $null
+    DriveLetter = $script:MountedDriveLetter
     Remote    = $remoteSpec
     CreatedAt = (Get-Date).ToString('o')
   })
 
 Write-Host "Mounted: $name"
 Write-Host " -> $mountDir"
-
