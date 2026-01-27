@@ -304,13 +304,13 @@ function Get-Display($cfg) {
   $rootProp = Get-PropValue $cfg 'root'
 
   $name = if ($nameProp) { [string]$nameProp } else { [string]$hostProp }
-  $host = [string]$hostProp
+  $remoteHost = [string]$hostProp
   $user = if ($userProp) { [string]$userProp } else { '' }
   $port = if ($portProp) { [string]$portProp } else { '' }
   $root = if ($rootProp) { [string]$rootProp } else { '' }
 
   $summary = ''
-  if ($user -and $host) { $summary = "$user@$host" } else { $summary = $host }
+  if ($user -and $remoteHost) { $summary = "$user@$remoteHost" } else { $summary = $remoteHost }
   if ($port) { $summary = "$summary`:$port" }
   if ($root) { $summary = "$summary $root" }
   if ($summary) { return "$name ($summary)" }
@@ -348,7 +348,7 @@ $safeName = Safe-Name $name
 $mountDir = Join-Path $PSScriptRoot $safeName
 $statePath = Join-Path $PSScriptRoot (".codex-sshfs-" + $safeName + ".json")
 
-$host = [string](Get-PropValue $cfg 'host')
+$remoteHost = [string](Get-PropValue $cfg 'host')
 $userProp = Get-PropValue $cfg 'username'
 $portProp = Get-PropValue $cfg 'port'
 $rootProp = Get-PropValue $cfg 'root'
@@ -356,7 +356,7 @@ $user = if ($userProp) { [string]$userProp } else { '' }
 $port = if ($portProp) { [string]$portProp } else { '' }
 $root = if ($rootProp) { [string]$rootProp } else { '' }
 
-$remote = if ($user) { "$user@$host" } else { $host }
+$remote = if ($user) { "$user@$remoteHost" } else { $remoteHost }
 $remoteSpec = if ($root) { "$remote`:$root" } else { "$remote`:" }
 
 $opts = @(
@@ -452,11 +452,11 @@ function Try-MountToDriveAndJunction {
   if (Test-Path -LiteralPath $mountDir) { Remove-JunctionOrDir $mountDir }
   cmd /c "mkdir ""$mountDir""" | Out-Null
 
-  $args = @()
-  if ($port) { $args += @('-p', $port) }
-  $args += @($remoteSpec, ($letter + ':'), '-o', $optStr)
+  $driveArgs = @()
+  if ($port) { $driveArgs += @('-p', $port) }
+  $driveArgs += @($remoteSpec, ($letter + ':'), '-o', $optStr)
 
-  & $script:SshfsCmd @args 2>&1 | ForEach-Object { $_ } | Out-Host
+  & $script:SshfsCmd @driveArgs 2>&1 | ForEach-Object { $_ } | Out-Host
 
   # Create junction: .\<host-name> -> X:\
   Remove-JunctionOrDir $mountDir
