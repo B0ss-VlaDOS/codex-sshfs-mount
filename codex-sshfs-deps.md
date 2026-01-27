@@ -83,7 +83,7 @@ command -v sshfs
 
 ## Windows 10/11 (для `codex-sshfs-mount.ps1`)
 
-На Windows `sshfs.exe` **не встроен** — он появляется после установки **WinFsp** и **SSHFS-Win**.
+На Windows `sshfs-win.exe` **не встроен** — он появляется после установки **WinFsp** и **SSHFS-Win**.
 
 ### Вариант A: winget (рекомендуется)
 ```powershell
@@ -98,16 +98,16 @@ choco install -y winfsp sshfs-win
 
 Проверка:
 ```powershell
-Get-Command sshfs
+Get-Command sshfs-win
 ```
 
-Если `sshfs` не находится:
+Если `sshfs-win` не находится:
 - закройте терминал и откройте заново (чтобы обновился `PATH`),
 - закройте все окна VS Code и откройте снова (он наследует `PATH` при запуске),
 - если не помогло — выполните **выключение и включение Windows** (полное Shut down → Power on), а не Restart,
-- проверьте `where sshfs` (cmd) или `Get-Command sshfs` (PowerShell).
-- если SSHFS-Win установлен, но `sshfs.exe` всё равно не в PATH — запустите PowerShell-скрипт с явным путём:
+- проверьте `where sshfs-win` (cmd) или `Get-Command sshfs-win` (PowerShell).
+- если SSHFS-Win установлен, но `sshfs-win.exe` всё равно не в PATH — запустите PowerShell-скрипт с явным путём:
   ```powershell
-  powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -SshfsPath "C:\Program Files\SSHFS-Win\bin\sshfs.exe"
+  powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -SshfsPath "C:\Program Files\SSHFS-Win\bin\sshfs-win.exe"
   ```
-- или задайте переменную окружения `SSHFS_EXE` на путь к `sshfs.exe`.
+- или задайте переменную окружения `SSHFS_EXE` на путь к `sshfs-win.exe`.

@@ -58,7 +58,7 @@ SSHFS-Win (WinFsp) into a folder next to this script (.\<host-name>\).
   -Interval SECONDS        SSH keepalive interval (default: 15).
   -Count N                 SSH keepalive max missed (default: 3).
   -DriveLetter X           Prefer drive letter (e.g. Z). If omitted, auto-pick when needed.
-  -SshfsPath PATH          Path to sshfs.exe (use if sshfs isn't in PATH).
+  -SshfsPath PATH          Path to sshfs-win.exe (preferred) or sshfs.exe.
   -DryRun                  Print sshfs command and exit.
   -Help                    Show help.
 
@@ -159,47 +159,65 @@ function Load-Jsonc([string]$Path) {
 }
 
 function Ensure-Dependencies {
-  function Resolve-SshfsExe([string]$PathHint) {
+  function Resolve-Exe([string]$PathHint, [string]$CommandName, [string[]]$Candidates) {
     if ($PathHint) {
       $p = [Environment]::ExpandEnvironmentVariables([string]$PathHint)
       if (Test-Path -LiteralPath $p -PathType Leaf) { return (Resolve-Path -LiteralPath $p).Path }
-      Die "sshfs.exe not found at -SshfsPath: $PathHint"
+      return $null
     }
 
-    $sshfs = Get-Command sshfs -ErrorAction SilentlyContinue
-    if ($sshfs -and $sshfs.Source) { return [string]$sshfs.Source }
+    $cmd = Get-Command $CommandName -ErrorAction SilentlyContinue
+    if ($cmd -and $cmd.Source) { return [string]$cmd.Source }
 
-    $candidates = @()
-    if ($env:ProgramFiles) {
-      $candidates += (Join-Path $env:ProgramFiles 'SSHFS-Win\bin\sshfs.exe')
-      $candidates += (Join-Path $env:ProgramFiles 'SSHFS-Win\bin\sshfs-win.exe')
-      $candidates += (Join-Path $env:ProgramFiles 'SSHFS-Win\sshfs.exe')
-      $candidates += (Join-Path $env:ProgramFiles 'SSHFS-Win\sshfs-win.exe')
-      $candidates += (Join-Path $env:ProgramFiles 'WinFsp\bin\sshfs.exe')
+    foreach ($p in $Candidates) {
+      if ($p -and (Test-Path -LiteralPath $p -PathType Leaf)) { return $p }
     }
-    $pf86 = ${env:ProgramFiles(x86)}
-    if ($pf86) {
-      $candidates += (Join-Path $pf86 'SSHFS-Win\bin\sshfs.exe')
-      $candidates += (Join-Path $pf86 'SSHFS-Win\bin\sshfs-win.exe')
-      $candidates += (Join-Path $pf86 'SSHFS-Win\sshfs.exe')
-      $candidates += (Join-Path $pf86 'SSHFS-Win\sshfs-win.exe')
-      $candidates += (Join-Path $pf86 'WinFsp\bin\sshfs.exe')
-    }
-    if ($env:LOCALAPPDATA) {
-      $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\SSHFS-Win\bin\sshfs.exe')
-      $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\SSHFS-Win\bin\sshfs-win.exe')
-      $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\SSHFS-Win\sshfs.exe')
-      $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\SSHFS-Win\sshfs-win.exe')
-    }
-
-    foreach ($p in $candidates) {
-      if (Test-Path -LiteralPath $p -PathType Leaf) { return $p }
-    }
-
     return $null
   }
 
-  $script:SshfsCmd = Resolve-SshfsExe $SshfsPath
+  $candidatesWin = @()
+  $candidatesSshfs = @()
+  if ($env:ProgramFiles) {
+    $candidatesWin += (Join-Path $env:ProgramFiles 'SSHFS-Win\bin\sshfs-win.exe')
+    $candidatesWin += (Join-Path $env:ProgramFiles 'SSHFS-Win\sshfs-win.exe')
+    $candidatesSshfs += (Join-Path $env:ProgramFiles 'SSHFS-Win\bin\sshfs.exe')
+    $candidatesSshfs += (Join-Path $env:ProgramFiles 'SSHFS-Win\sshfs.exe')
+    $candidatesSshfs += (Join-Path $env:ProgramFiles 'WinFsp\bin\sshfs.exe')
+  }
+  $pf86 = ${env:ProgramFiles(x86)}
+  if ($pf86) {
+    $candidatesWin += (Join-Path $pf86 'SSHFS-Win\bin\sshfs-win.exe')
+    $candidatesWin += (Join-Path $pf86 'SSHFS-Win\sshfs-win.exe')
+    $candidatesSshfs += (Join-Path $pf86 'SSHFS-Win\bin\sshfs.exe')
+    $candidatesSshfs += (Join-Path $pf86 'SSHFS-Win\sshfs.exe')
+    $candidatesSshfs += (Join-Path $pf86 'WinFsp\bin\sshfs.exe')
+  }
+  if ($env:LOCALAPPDATA) {
+    $candidatesWin += (Join-Path $env:LOCALAPPDATA 'Programs\SSHFS-Win\bin\sshfs-win.exe')
+    $candidatesWin += (Join-Path $env:LOCALAPPDATA 'Programs\SSHFS-Win\sshfs-win.exe')
+    $candidatesSshfs += (Join-Path $env:LOCALAPPDATA 'Programs\SSHFS-Win\bin\sshfs.exe')
+    $candidatesSshfs += (Join-Path $env:LOCALAPPDATA 'Programs\SSHFS-Win\sshfs.exe')
+  }
+
+  $hint = $SshfsPath
+  $hintWin = $null
+  $hintSshfs = $null
+  if ($hint) {
+    $leaf = [IO.Path]::GetFileName([string]$hint).ToLowerInvariant()
+    if ($leaf -eq 'sshfs-win.exe') { $hintWin = $hint }
+    elseif ($leaf -eq 'sshfs.exe') { $hintSshfs = $hint }
+    else { $hintWin = $hint }
+  }
+
+  $script:SshfsWinCmd = Resolve-Exe $hintWin 'sshfs-win' $candidatesWin
+  $script:SshfsCmd = Resolve-Exe $hintSshfs 'sshfs' $candidatesSshfs
+
+  if ($script:SshfsWinCmd) {
+    if (-not (Get-Command sshfs-win -ErrorAction SilentlyContinue)) {
+      Write-Host ("Using sshfs-win.exe from: " + $script:SshfsWinCmd)
+    }
+    return
+  }
   if ($script:SshfsCmd) {
     if (-not (Get-Command sshfs -ErrorAction SilentlyContinue)) {
       Write-Host ("Using sshfs.exe from: " + $script:SshfsCmd)
@@ -207,7 +225,7 @@ function Ensure-Dependencies {
     return
   }
 
-  Write-Host "sshfs.exe not found (not in PATH and not in common install locations). Windows needs WinFsp + SSHFS-Win."
+  Write-Host "sshfs-win.exe / sshfs.exe not found. Windows needs WinFsp + SSHFS-Win."
   if (Get-Command winget -ErrorAction SilentlyContinue) {
     Write-Host "Install (recommended):"
     Write-Host "  winget install WinFsp.WinFsp"
@@ -219,13 +237,13 @@ function Ensure-Dependencies {
     Write-Host "Install:"
     Write-Host "  1) WinFsp"
     Write-Host "  2) SSHFS-Win"
-    Write-Host "Then ensure 'sshfs.exe' is in PATH and re-run."
+    Write-Host "Then ensure 'sshfs-win.exe' is in PATH (or pass -SshfsPath) and re-run."
   }
 
   Write-Host ""
-  Write-Host "If SSHFS-Win is installed but sshfs.exe isn't in PATH:"
-  Write-Host "  1) Find it: where sshfs   (in cmd)  OR  Get-Command sshfs (in PowerShell)"
-  Write-Host "  2) Re-run with: -SshfsPath 'C:\\path\\to\\sshfs.exe'  (or set env SSHFS_EXE)"
+  Write-Host "If SSHFS-Win is installed but sshfs-win.exe isn't in PATH:"
+  Write-Host "  1) Find it: where sshfs-win   (in cmd)  OR  Get-Command sshfs-win (in PowerShell)"
+  Write-Host "  2) Re-run with: -SshfsPath 'C:\\path\\to\\sshfs-win.exe'  (or set env SSHFS_EXE)"
 
   if ($DryRun) {
     Write-Warning "sshfs is not installed; continuing because -DryRun was used."
@@ -240,6 +258,93 @@ function Safe-Name([string]$Name) {
   $s = -join ($s.ToCharArray() | Where-Object { $_ -match '[A-Za-z0-9._-]' })
   if (-not $s) { return 'sshfs-mount' }
   return $s
+}
+
+function Quote-Arg([string]$Arg) {
+  if ($null -eq $Arg) { return '""' }
+  if ($Arg -eq '') { return '""' }
+  if ($Arg -match '[\s"]') { return '"' + ($Arg -replace '"', '""') + '"' }
+  return $Arg
+}
+
+function Build-SshfsWinPrefix {
+  param(
+    [string]$RemoteHost,
+    [string]$RemoteUser,
+    [string]$Port,
+    [string]$Root
+  )
+
+  $suffix = ''
+  $path = ''
+  if ($Root) {
+    $r = [string]$Root
+    if ($r.StartsWith('/')) {
+      $suffix = '.r'
+      $r = $r.TrimStart('/')
+    }
+    $r = $r.TrimStart('\', '/')
+    if ($r) { $path = ($r -replace '/', '\') }
+  }
+
+  $server = 'sshfs' + $suffix
+  $hostPart = if ($RemoteUser) { ([string]$RemoteUser + '@' + [string]$RemoteHost) } else { [string]$RemoteHost }
+  if ($Port) { $hostPart = $hostPart + '!' + [string]$Port }
+
+  $prefix = '\' + $server + '\' + $hostPart
+  if ($path) { $prefix = $prefix + '\' + $path }
+  return $prefix
+}
+
+function Invoke-SshfsWinSvc {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Prefix,
+    [Parameter(Mandatory = $true)]
+    [string]$DriveMount,
+    [string]$OptStr = '',
+    [string]$Password = ''
+  )
+
+  if (-not $script:SshfsWinCmd) { Die "sshfs-win.exe is required (not found)" }
+
+  $argv = @('svc', $Prefix, $DriveMount)
+  if ($OptStr) { $argv += @('-o', $OptStr) }
+  $argLine = ($argv | ForEach-Object { Quote-Arg $_ }) -join ' '
+
+  if (-not $Password) {
+    & $script:SshfsWinCmd @argv
+    return $LASTEXITCODE
+  }
+
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName = $script:SshfsWinCmd
+  $psi.Arguments = $argLine
+  $psi.UseShellExecute = $false
+  $psi.RedirectStandardInput = $true
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError = $true
+  $psi.CreateNoWindow = $true
+
+  $proc = New-Object System.Diagnostics.Process
+  $proc.StartInfo = $psi
+  [void]$proc.Start()
+
+  try {
+    $proc.StandardInput.WriteLine($Password)
+    $proc.StandardInput.Close()
+  } catch { }
+
+  $stdout = ''
+  $stderr = ''
+  try { $stdout = $proc.StandardOutput.ReadToEnd() } catch { }
+  try { $stderr = $proc.StandardError.ReadToEnd() } catch { }
+  $proc.WaitForExit()
+
+  if ($stdout) { $stdout.TrimEnd("`r", "`n") | Write-Host }
+  if ($stderr) { $stderr.TrimEnd("`r", "`n") | Write-Host }
+
+  return $proc.ExitCode
 }
 
 function Invoke-Sshfs {
@@ -290,7 +395,15 @@ function Invoke-Sshfs {
 }
 
 function Get-FreeDriveLetter {
-  $used = (Get-PSDrive -PSProvider FileSystem).Name
+  $used = @()
+  try {
+    $used += [System.IO.DriveInfo]::GetDrives() | ForEach-Object { $_.Name.Substring(0, 1).ToUpperInvariant() }
+  } catch { }
+  try {
+    $used += (Get-PSDrive -PSProvider FileSystem).Name | ForEach-Object { $_.ToUpperInvariant() }
+  } catch { }
+  $used = @($used | Where-Object { $_ } | Select-Object -Unique)
+
   foreach ($c in [char[]]([char]'Z'..[char]'D')) {
     $letter = ([string]$c).ToUpperInvariant()
     if ($used -notcontains $letter) { return $letter }
@@ -458,6 +571,7 @@ if ($keyPathProp -is [string] -and [string]$keyPathProp) {
 
 $remote = if ($user) { "$user@$remoteHost" } else { $remoteHost }
 $remoteSpec = if ($root) { "$remote`:$root" } else { "$remote`:" }
+$sshfsWinPrefix = Build-SshfsWinPrefix -RemoteHost $remoteHost -RemoteUser $user -Port $port -Root $root
 
 $opts = @(
   "reconnect",
@@ -497,7 +611,10 @@ function Unmount-ByState {
   }
 
   if ($dl) {
-    try { mountvol ($dl + ':') /D | Out-Null } catch { }
+    $dlClean = ([string]$dl).TrimEnd(':')
+    $dlMount = $dlClean + ':'
+    try { cmd /c ("net use " + $dlMount + " /delete /y") | Out-Null } catch { }
+    try { mountvol ($dlClean + ':') /D | Out-Null } catch { }
   }
   if (Test-IsJunction $md) {
     try { cmd /c "rmdir ""$md""" | Out-Null } catch { }
@@ -545,7 +662,6 @@ if ($port) { $cmdArgs += @('-p', $port) }
 $cmdArgs += @($remoteSpec, $mountDir, '-o', $optStr)
 
 if ($DryRun) {
-  $sshfsForPrint = if ($script:SshfsCmd) { $script:SshfsCmd } else { 'sshfs' }
   $fmt = {
     param([string[]]$arr)
     ($arr | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' '
@@ -555,23 +671,35 @@ if ($DryRun) {
   if ($letterForPrint) { $letterForPrint = $letterForPrint.ToUpperInvariant() }
 
   if ($letterForPrint) {
-    $driveArgsForPrint = @()
-    if ($port) { $driveArgsForPrint += @('-p', $port) }
-    $driveArgsForPrint += @($remoteSpec, ($letterForPrint + ':'), '-o', $optStr)
-    $printedDrive = @($sshfsForPrint) + $driveArgsForPrint
-    Write-Host ('sshfs command (drive): ' + (& $fmt $printedDrive))
+    $driveMountForPrint = ($letterForPrint + ':')
+    if ($script:SshfsWinCmd) {
+      $printedSvc = @($script:SshfsWinCmd, 'svc', $sshfsWinPrefix, $driveMountForPrint, '-o', $optStr)
+      Write-Host ('sshfs-win command (drive): ' + (& $fmt $printedSvc))
+    } elseif ($script:SshfsCmd) {
+      $sshfsForPrint = $script:SshfsCmd
+      $driveArgsForPrint = @()
+      if ($port) { $driveArgsForPrint += @('-p', $port) }
+      $driveArgsForPrint += @($remoteSpec, $driveMountForPrint, '-o', $optStr)
+      $printedDrive = @($sshfsForPrint) + $driveArgsForPrint
+      Write-Host ('sshfs command (drive): ' + (& $fmt $printedDrive))
+    } else {
+      Write-Host "sshfs command (drive): <sshfs-win/sshfs not found>"
+    }
     Write-Host ('junction target: ' + $mountDir + ' -> ' + $letterForPrint + ':\')
   } else {
     Write-Host "sshfs command (drive): <no free drive letter available>"
   }
 
-  $printedDir = @($sshfsForPrint) + $cmdArgs
-  Write-Host ('sshfs command (dir fallback): ' + (& $fmt $printedDir))
+  if ($script:SshfsCmd) {
+    $printedDir = @($script:SshfsCmd) + $cmdArgs
+    Write-Host ('sshfs command (dir fallback): ' + (& $fmt $printedDir))
+  }
   exit 0
 }
 
 function Try-MountToDir {
   try {
+    if (-not $script:SshfsCmd) { return $false }
     $rc = Invoke-Sshfs -Arguments $cmdArgs -Password $askpassSecret
     return ($rc -eq 0)
   } catch {
@@ -593,13 +721,25 @@ function Try-MountToDriveAndJunction {
   if (Test-Path -LiteralPath $mountDir) { Remove-JunctionOrDir $mountDir }
   cmd /c "mkdir ""$mountDir""" | Out-Null
 
-  $driveArgs = @()
-  if ($port) { $driveArgs += @('-p', $port) }
   $driveMount = ($letter + ':')
-  $driveArgs += @($remoteSpec, $driveMount, '-o', $optStr)
-
-  $rc = Invoke-Sshfs -Arguments $driveArgs -Password $askpassSecret
+  $rc = 1
+  if ($script:SshfsWinCmd) {
+    $rc = Invoke-SshfsWinSvc -Prefix $sshfsWinPrefix -DriveMount $driveMount -OptStr $optStr -Password $askpassSecret
+  } elseif ($script:SshfsCmd) {
+    $driveArgs = @()
+    if ($port) { $driveArgs += @('-p', $port) }
+    $driveArgs += @($remoteSpec, $driveMount, '-o', $optStr)
+    $rc = Invoke-Sshfs -Arguments $driveArgs -Password $askpassSecret
+  } else {
+    Die "sshfs-win.exe/sshfs.exe not found"
+  }
   if ($rc -ne 0) { return $false }
+
+  $driveRoot = ($letter + ':\')
+  for ($i = 0; $i -lt 10; $i++) {
+    if (Test-Path -LiteralPath $driveRoot) { break }
+    Start-Sleep -Seconds 1
+  }
 
   # Create junction: .\<host-name> -> X:\
   Remove-JunctionOrDir $mountDir

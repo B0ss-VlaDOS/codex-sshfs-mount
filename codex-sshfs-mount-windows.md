@@ -11,7 +11,7 @@
 - VS Code + установленный плагин **SSH FS** (в нём должны быть добавлены хосты)
 - PowerShell 5.1+ или PowerShell 7+
 - **WinFsp**
-- **SSHFS-Win** (даёт `sshfs.exe`; нужен в `PATH` или укажите путь через `-SshfsPath` / `SSHFS_EXE`)
+- **SSHFS-Win** (даёт `sshfs-win.exe`; нужен в `PATH` или укажите путь через `-SshfsPath` / `SSHFS_EXE`)
 
 ## Установка
 
@@ -28,20 +28,20 @@ choco install -y winfsp sshfs-win
 
 Проверка:
 ```powershell
-Get-Command sshfs
+Get-Command sshfs-win
 ```
 
-Важно: после установки WinFsp/SSHFS-Win **закройте и заново откройте терминал и VS Code**. Если `sshfs` всё равно не находится — выполните **выключение и включение Windows** (полное Shut down → Power on), а не Restart.
+Важно: после установки WinFsp/SSHFS-Win **закройте и заново откройте терминал и VS Code**. Если `sshfs-win` всё равно не находится — выполните **выключение и включение Windows** (полное Shut down → Power on), а не Restart.
 
-Если `Get-Command sshfs` ничего не выводит (а SSHFS-Win установлен):
-- Найдите бинарник: `where sshfs` (cmd) или в типичных местах вроде `C:\Program Files\SSHFS-Win\bin\sshfs.exe`
+Если `Get-Command sshfs-win` ничего не выводит (а SSHFS-Win установлен):
+- Найдите бинарник: `where sshfs-win` (cmd) или в типичных местах вроде `C:\Program Files\SSHFS-Win\bin\sshfs-win.exe`
 - Запустите скрипт с явным путём:
   ```powershell
-  powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -SshfsPath "C:\Program Files\SSHFS-Win\bin\sshfs.exe"
+  powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -SshfsPath "C:\Program Files\SSHFS-Win\bin\sshfs-win.exe"
   ```
   или задайте переменную окружения (пример):
   ```powershell
-  setx SSHFS_EXE "C:\Program Files\SSHFS-Win\bin\sshfs.exe"
+  setx SSHFS_EXE "C:\Program Files\SSHFS-Win\bin\sshfs-win.exe"
   ```
 
 ## Запуск
@@ -101,4 +101,4 @@ powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -Interval 10 -C
 
 - Скрипт по умолчанию монтирует в свободную букву диска и создаёт junction `.\<host-name>\ -> X:\` (так надёжнее с WinFsp). Если монтирование в букву диска не сработало — скрипт пробует directory mount напрямую в `.\<host-name>\`.
 - Для первого подключения к хосту скрипт добавляет SSH-опцию `StrictHostKeyChecking=no`, чтобы не появлялся интерактивный вопрос `yes/no` про known hosts. При необходимости Вы можете переопределить это через `SSHFS_EXTRA_OPTS` (например, `StrictHostKeyChecking=accept-new` или `StrictHostKeyChecking=yes`).
-- Если в `sshfs.configs` указан `password` строкой — пароль будет подставлен через `SSH_ASKPASS` (без интерактивного ввода). Если `password` задан как boolean (секрет хранится вне `settings.json`) — скрипт не сможет извлечь пароль и может запросить его при подключении.
+- Если в `sshfs.configs` указан `password` строкой — пароль будет подставлен без интерактивного ввода. Если `password` задан как boolean (секрет хранится вне `settings.json`) — скрипт не сможет извлечь пароль и может запросить его при подключении.
