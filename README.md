@@ -81,7 +81,12 @@ Get-Command sshfs-win
 
 ### 4) Смонтируйте хост нашим скриптом
 
-Из папки репозитория:
+Дефолтный вариант (интерактивно: скрипт покажет список и попросит выбрать номер хоста):
+```powershell
+powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1
+```
+
+Из папки репозитория без интерактива (выбор по имени хоста из SSH FS):
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -Select "{имя хоста}"
 ```
