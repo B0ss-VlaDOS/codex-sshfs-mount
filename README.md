@@ -59,7 +59,7 @@ powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1
    - `port` — обычно `22`,
    - `username` — пользователь на сервере,
    - `root` — **путь до корня сайта на сервере** (например `/var/www/site`, `/home/user/www`, и т.п.).
-3. Если используете парольную аутентификацию — пароль хранится в самом расширении (через механизмы VS Code), а не в `settings.json`.
+   - `password` - пароль
 
 Примечания:
 - Рекомендуется ключевая аутентификация: укажите `privateKeyPath` (в UI расширения или в `sshfs.configs`) и держите ключ в `~/.ssh/`.
