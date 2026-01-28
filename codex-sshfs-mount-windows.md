@@ -75,6 +75,10 @@ powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -Select "exampl
 powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -Select "example-host" -Unmount
 ```
 
+Примечание:
+- Скрипт хранит state-файл рядом с собой: `.codex-sshfs-<host-name>.json` (в т.ч. букву диска и UNC provider вида `\\sshfs\...`).
+- При `-Unmount` он старается **не удалить чужой** диск, если буква уже переиспользована (проверяет provider; при необходимости ищет актуальную букву по provider).
+
 ## Где берётся `settings.json`
 
 - Можно явно: `-SettingsPath PATH` или переменная `VSCODE_SETTINGS`.
@@ -101,6 +105,6 @@ powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -Interval 10 -C
 
 ## Примечания
 
-- Скрипт по умолчанию монтирует в свободную букву диска и создаёт junction `.\<host-name>\ -> X:\` (так надёжнее с WinFsp). Если монтирование в букву диска не сработало — скрипт пробует directory mount напрямую в `.\<host-name>\`.
+- Скрипт монтирует в свободную букву диска и создаёт junction `.\<host-name>\ -> X:\` (так надёжнее с WinFsp).
 - Для первого подключения к хосту скрипт отключает интерактивный вопрос `yes/no` про known hosts через `StrictHostKeyChecking=no` и `UserKnownHostsFile=/dev/null`. При необходимости Вы можете переопределить это через `SSHFS_EXTRA_OPTS` (например, `StrictHostKeyChecking=accept-new` или `StrictHostKeyChecking=yes`).
 - Если `password` задан как boolean (секрет хранится вне `settings.json`) — скрипт не сможет извлечь пароль и может запросить его при подключении.

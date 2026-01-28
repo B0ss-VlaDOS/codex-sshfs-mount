@@ -13,6 +13,8 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$script:LastSshfsWinStdout = ''
+$script:LastSshfsWinStderr = ''
 
 function Die([string]$Message) {
   Write-Error $Message
@@ -58,7 +60,7 @@ SSHFS-Win (WinFsp) into a folder next to this script (.\<host-name>\).
   -Interval SECONDS        SSH keepalive interval (default: 15).
   -Count N                 SSH keepalive max missed (default: 3).
   -DriveLetter X           Prefer drive letter (e.g. Z). If omitted, auto-pick when needed.
-  -SshfsPath PATH          Path to sshfs-win.exe (preferred) or sshfs.exe.
+  -SshfsPath PATH          Path to sshfs-win.exe.
   -DryRun                  Print sshfs command and exit.
   -Help                    Show help.
 
@@ -176,41 +178,31 @@ function Ensure-Dependencies {
   }
 
   $candidatesWin = @()
-  $candidatesSshfs = @()
   if ($env:ProgramFiles) {
     $candidatesWin += (Join-Path $env:ProgramFiles 'SSHFS-Win\bin\sshfs-win.exe')
     $candidatesWin += (Join-Path $env:ProgramFiles 'SSHFS-Win\sshfs-win.exe')
-    $candidatesSshfs += (Join-Path $env:ProgramFiles 'SSHFS-Win\bin\sshfs.exe')
-    $candidatesSshfs += (Join-Path $env:ProgramFiles 'SSHFS-Win\sshfs.exe')
-    $candidatesSshfs += (Join-Path $env:ProgramFiles 'WinFsp\bin\sshfs.exe')
   }
   $pf86 = ${env:ProgramFiles(x86)}
   if ($pf86) {
     $candidatesWin += (Join-Path $pf86 'SSHFS-Win\bin\sshfs-win.exe')
     $candidatesWin += (Join-Path $pf86 'SSHFS-Win\sshfs-win.exe')
-    $candidatesSshfs += (Join-Path $pf86 'SSHFS-Win\bin\sshfs.exe')
-    $candidatesSshfs += (Join-Path $pf86 'SSHFS-Win\sshfs.exe')
-    $candidatesSshfs += (Join-Path $pf86 'WinFsp\bin\sshfs.exe')
   }
   if ($env:LOCALAPPDATA) {
     $candidatesWin += (Join-Path $env:LOCALAPPDATA 'Programs\SSHFS-Win\bin\sshfs-win.exe')
     $candidatesWin += (Join-Path $env:LOCALAPPDATA 'Programs\SSHFS-Win\sshfs-win.exe')
-    $candidatesSshfs += (Join-Path $env:LOCALAPPDATA 'Programs\SSHFS-Win\bin\sshfs.exe')
-    $candidatesSshfs += (Join-Path $env:LOCALAPPDATA 'Programs\SSHFS-Win\sshfs.exe')
   }
 
   $hint = $SshfsPath
   $hintWin = $null
-  $hintSshfs = $null
   if ($hint) {
     $leaf = [IO.Path]::GetFileName([string]$hint).ToLowerInvariant()
     if ($leaf -eq 'sshfs-win.exe') { $hintWin = $hint }
-    elseif ($leaf -eq 'sshfs.exe') { $hintSshfs = $hint }
-    else { $hintWin = $hint }
+    elseif ($leaf -eq 'sshfs.exe') {
+      Write-Warning "You passed sshfs.exe via -SshfsPath. This script requires sshfs-win.exe (SSHFS-Win)."
+    } else { $hintWin = $hint }
   }
 
   $script:SshfsWinCmd = Resolve-Exe $hintWin 'sshfs-win' $candidatesWin
-  $script:SshfsCmd = Resolve-Exe $hintSshfs 'sshfs' $candidatesSshfs
 
   if ($script:SshfsWinCmd) {
     if (-not (Get-Command sshfs-win -ErrorAction SilentlyContinue)) {
@@ -218,14 +210,8 @@ function Ensure-Dependencies {
     }
     return
   }
-  if ($script:SshfsCmd) {
-    if (-not (Get-Command sshfs -ErrorAction SilentlyContinue)) {
-      Write-Host ("Using sshfs.exe from: " + $script:SshfsCmd)
-    }
-    return
-  }
 
-  Write-Host "sshfs-win.exe / sshfs.exe not found. Windows needs WinFsp + SSHFS-Win."
+  Write-Host "sshfs-win.exe not found. Windows needs WinFsp + SSHFS-Win."
   if (Get-Command winget -ErrorAction SilentlyContinue) {
     Write-Host "Install (recommended):"
     Write-Host "  winget install WinFsp.WinFsp"
@@ -245,11 +231,8 @@ function Ensure-Dependencies {
   Write-Host "  1) Find it: where sshfs-win   (in cmd)  OR  Get-Command sshfs-win (in PowerShell)"
   Write-Host "  2) Re-run with: -SshfsPath 'C:\\path\\to\\sshfs-win.exe'  (or set env SSHFS_EXE)"
 
-  if ($DryRun) {
-    Write-Warning "sshfs is not installed; continuing because -DryRun was used."
-    return
-  }
-  Die "sshfs is required"
+  if ($DryRun) { Write-Warning "sshfs-win is not installed; continuing because -DryRun was used."; return }
+  Die "sshfs-win.exe is required"
 }
 
 function Safe-Name([string]$Name) {
@@ -312,7 +295,10 @@ function Invoke-SshfsWinSvc {
   if (-not $script:SshfsWinCmd) { Die "sshfs-win.exe is required (not found)" }
 
   $argv = @('svc', $Prefix, $DriveMount)
-  if ($LocalUser) { $argv += @([string]$LocalUser) }
+  $hasOptions = @($Options | Where-Object { $_ }).Count -gt 0
+  # sshfs-win svc has an optional LOCUSER positional arg. If we pass -o options, we must still include
+  # LOCUSER (can be empty) so that '-o' isn't consumed as LOCUSER.
+  if ($hasOptions -or $LocalUser) { $argv += @([string]$LocalUser) }
   foreach ($o in @($Options)) {
     if ($o) { $argv += @('-o', [string]$o) }
   }
@@ -359,53 +345,6 @@ function Invoke-SshfsWinSvc {
   return $proc.ExitCode
 }
 
-function Invoke-Sshfs {
-  param(
-    [Parameter(Mandatory = $true)]
-    [string[]]$Arguments,
-    [string]$Password = ''
-  )
-
-  if (-not $script:SshfsCmd) { Die "internal error: sshfs path is not resolved" }
-
-  if ($Password) {
-    $tempDir = $env:TEMP
-    if (-not $tempDir) { $tempDir = [IO.Path]::GetTempPath() }
-    $askpass = Join-Path $tempDir ("codex-sshfs-askpass-" + ([guid]::NewGuid().ToString('N')) + ".cmd")
-
-    # Use PowerShell inside the .cmd to avoid cmd metacharacter issues (&, |, <, >, etc.) in passwords.
-    $askpassContent = "@echo off`r`n" +
-      'powershell -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -Command "[Console]::WriteLine($env:SSHFS_PASSWORD)"' +
-      "`r`n"
-    $askpassContent | Set-Content -LiteralPath $askpass -Encoding ASCII
-
-    $oldAskpass = $env:SSH_ASKPASS
-    $oldAskpassReq = $env:SSH_ASKPASS_REQUIRE
-    $oldDisplay = $env:DISPLAY
-    $oldPw = $env:SSHFS_PASSWORD
-
-    try {
-      $env:SSHFS_PASSWORD = $Password
-      $env:SSH_ASKPASS = $askpass
-      $env:SSH_ASKPASS_REQUIRE = 'force'
-      if (-not $env:DISPLAY) { $env:DISPLAY = '1' }
-
-      & $script:SshfsCmd @Arguments
-      return $LASTEXITCODE
-    } finally {
-      try { Remove-Item -LiteralPath $askpass -Force } catch { }
-
-      if ($null -ne $oldAskpass) { $env:SSH_ASKPASS = $oldAskpass } else { Remove-Item env:SSH_ASKPASS -ErrorAction SilentlyContinue }
-      if ($null -ne $oldAskpassReq) { $env:SSH_ASKPASS_REQUIRE = $oldAskpassReq } else { Remove-Item env:SSH_ASKPASS_REQUIRE -ErrorAction SilentlyContinue }
-      if ($null -ne $oldDisplay) { $env:DISPLAY = $oldDisplay } else { Remove-Item env:DISPLAY -ErrorAction SilentlyContinue }
-      if ($null -ne $oldPw) { $env:SSHFS_PASSWORD = $oldPw } else { Remove-Item env:SSHFS_PASSWORD -ErrorAction SilentlyContinue }
-    }
-  }
-
-  & $script:SshfsCmd @Arguments
-  return $LASTEXITCODE
-}
-
 function Get-FreeDriveLetter {
   $used = @()
   try {
@@ -421,6 +360,99 @@ function Get-FreeDriveLetter {
     if ($used -notcontains $letter) { return $letter }
   }
   return $null
+}
+
+function Normalize-DriveLetter([string]$Value) {
+  if (-not $Value) { return '' }
+  $x = ([string]$Value).Trim().TrimEnd(':')
+  if ($x.Length -ne 1) { return '' }
+  return $x.ToUpperInvariant()
+}
+
+function Get-ProviderFromPrefix([string]$Prefix) {
+  if (-not $Prefix) { return '' }
+  return ('\\' + ([string]$Prefix).TrimStart('\'))
+}
+
+function Get-LocalUserForSshfsWin {
+  if ($env:USERNAME) {
+    if ($env:USERDOMAIN) { return ([string]$env:USERDOMAIN + '+' + [string]$env:USERNAME) }
+    return [string]$env:USERNAME
+  }
+
+  try {
+    $id = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    if ($id -and $id.Name) {
+      $n = [string]$id.Name
+      if ($n -match '^[^\\]+\\[^\\]+$') { return ($n -replace '\\', '+') }
+      return $n
+    }
+  } catch { }
+
+  return ''
+}
+
+function Get-DriveProviderName([string]$DriveLetter) {
+  $dl = Normalize-DriveLetter $DriveLetter
+  if (-not $dl) { return '' }
+  $id = $dl + ':'
+  $filter = "DeviceID='$id'"
+
+  $disk = $null
+  try {
+    $disk = Get-CimInstance -ClassName Win32_LogicalDisk -Filter $filter -ErrorAction Stop
+  } catch {
+    try { $disk = Get-WmiObject -Class Win32_LogicalDisk -Filter $filter -ErrorAction Stop } catch { $disk = $null }
+  }
+
+  if ($disk -and $disk.PSObject.Properties.Match('ProviderName').Count -gt 0 -and $disk.ProviderName) {
+    return [string]$disk.ProviderName
+  }
+  return ''
+}
+
+function Find-DriveLetterByProviderName([string]$ProviderName) {
+  if (-not $ProviderName) { return '' }
+  $want = [string]$ProviderName
+
+  $disks = $null
+  try {
+    $disks = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DriveType=4" -ErrorAction Stop
+  } catch {
+    try { $disks = Get-WmiObject -Class Win32_LogicalDisk -Filter "DriveType=4" -ErrorAction Stop } catch { $disks = $null }
+  }
+  if (-not $disks) { return '' }
+
+  $hits = @()
+  foreach ($d in @($disks)) {
+    $pn = if ($d.ProviderName) { [string]$d.ProviderName } else { '' }
+    if ($pn -and ($pn -ieq $want)) {
+      $hits += (Normalize-DriveLetter ([string]$d.DeviceID))
+    }
+  }
+  $hits = @($hits | Where-Object { $_ })
+  if ($hits.Count -gt 1) {
+    Write-Warning ("Multiple drives match provider '" + $want + "': " + (($hits | Sort-Object -Unique) -join ', ') + ". Using: " + $hits[0])
+  }
+  if ($hits.Count -ge 1) { return $hits[0] }
+  return ''
+}
+
+function Try-UnmountDrive([string]$DriveLetter) {
+  $dl = Normalize-DriveLetter $DriveLetter
+  if (-not $dl) { return $true }
+  $root = $dl + ':\'
+  if (-not (Test-Path -LiteralPath $root)) { return $true }
+
+  $mount = $dl + ':'
+  try { cmd /c ("net use " + $mount + " /delete /y") | Out-Null } catch { }
+  try { mountvol $mount /D | Out-Null } catch { }
+
+  for ($i = 0; $i -lt 8; $i++) {
+    if (-not (Test-Path -LiteralPath $root)) { return $true }
+    Start-Sleep -Seconds 1
+  }
+  return $false
 }
 
 function Test-IsJunction([string]$Path) {
@@ -450,17 +482,6 @@ function Test-IsEmptyDir([string]$Path) {
   } catch {
     return $false
   }
-}
-
-function Is-Mounted([string]$MountDir, [string]$DriveLetter) {
-  if ($DriveLetter) {
-    return (Test-Path -LiteralPath ($DriveLetter + ':\'))
-  }
-  # Best-effort: if dir is a junction to a live target, treat as mounted
-  if (Test-IsJunction $MountDir) {
-    try { (Get-Item -LiteralPath $MountDir -Force) | Out-Null; return $true } catch { return $false }
-  }
-  return $false
 }
 
 Ensure-Dependencies
@@ -584,6 +605,7 @@ if ($keyPathProp -is [string] -and [string]$keyPathProp) {
 $remote = if ($user) { "$user@$remoteHost" } else { $remoteHost }
 $remoteSpec = if ($root) { "$remote`:$root" } else { "$remote`:" }
 $sshfsWinPrefix = Build-SshfsWinPrefix -RemoteHost $remoteHost -RemoteUser $user -Port $port -Root $root
+$expectedProvider = Get-ProviderFromPrefix $sshfsWinPrefix
 
 $opts = @(
   "ServerAliveInterval=$Interval",
@@ -605,7 +627,6 @@ if ($keyPath) {
 if ($askpassSecret -and (-not $keyPath)) {
   $opts += @("password_stdin")
 }
-$optStr = ($opts -join ',')
 
 function Write-State($obj) {
   ($obj | ConvertTo-Json -Depth 10) | Set-Content -LiteralPath $statePath -Encoding UTF8
@@ -618,65 +639,114 @@ function Read-State {
 
 function Unmount-ByState {
   $st = Read-State
-  if (-not $st) { return $false }
-  $dl = if ($st.DriveLetter) { [string]$st.DriveLetter } else { '' }
-  $md = if ($st.MountDir) { [string]$st.MountDir } else { $mountDir }
+  if (-not $st) {
+    return [pscustomobject]@{
+      Found         = $false
+      DriveLetter   = ''
+      ProviderExpected = ''
+      ProviderActual   = ''
+      DriveUnmounted = $true
+      MountDirRemoved = $false
+      StateRemoved  = $false
+    }
+  }
+
+  $dl = ''
+  if ($st.PSObject.Properties.Match('DriveLetter').Count -gt 0 -and $st.DriveLetter) {
+    $dl = Normalize-DriveLetter ([string]$st.DriveLetter)
+  }
+  $md = if ($st.PSObject.Properties.Match('MountDir').Count -gt 0 -and $st.MountDir) { [string]$st.MountDir } else { $mountDir }
+
+  $providerExpected = ''
+  if ($st.PSObject.Properties.Match('Provider').Count -gt 0 -and $st.Provider) { $providerExpected = [string]$st.Provider }
+  if (-not $providerExpected) { $providerExpected = $expectedProvider }
+
+  $drivePresentAtDl = $false
+  if ($dl) {
+    try { $drivePresentAtDl = (Test-Path -LiteralPath ($dl + ':\')) } catch { $drivePresentAtDl = $false }
+  }
+
+  $providerActual = ''
+  if ($drivePresentAtDl) { $providerActual = Get-DriveProviderName $dl }
+
+  $res = [pscustomobject]@{
+    Found           = $true
+    DriveLetter     = $dl
+    ProviderExpected = $providerExpected
+    ProviderActual   = $providerActual
+    DriveUnmounted  = $true
+    MountDirRemoved = $false
+    StateRemoved    = $false
+  }
 
   if ($DryRun) {
     Write-Host "Would unmount: $md"
-    return $true
+    return $res
   }
 
-  if ($dl) {
-    $dlClean = ([string]$dl).TrimEnd(':')
-    $dlMount = $dlClean + ':'
-    try { cmd /c ("net use " + $dlMount + " /delete /y") | Out-Null } catch { }
-    try { mountvol ($dlClean + ':') /D | Out-Null } catch { }
+  $targetDrive = ''
+  if ($dl -and $drivePresentAtDl) {
+    if ($providerExpected) {
+      if (-not $providerActual) {
+        Write-Warning ("Drive " + $dl + ": provider cannot be determined; refusing to unmount by drive letter.")
+      } elseif ($providerActual -ine $providerExpected) {
+        Write-Warning ("Drive " + $dl + ": provider '" + $providerActual + "' does not match expected '" + $providerExpected + "'.")
+      } else {
+        $targetDrive = $dl
+      }
+    } else {
+      $targetDrive = $dl
+    }
   }
+  if (-not $targetDrive -and $providerExpected) {
+    $targetDrive = Find-DriveLetterByProviderName $providerExpected
+  }
+
+  if ($targetDrive) {
+    $res.DriveLetter = $targetDrive
+    $res.ProviderActual = Get-DriveProviderName $targetDrive
+    $res.DriveUnmounted = Try-UnmountDrive $targetDrive
+    if (-not $res.DriveUnmounted) {
+      Write-Warning ("Failed to unmount drive " + $targetDrive + ":")
+      if ($script:LastSshfsWinStdout) { $script:LastSshfsWinStdout.TrimEnd("`r", "`n") | Write-Host }
+      if ($script:LastSshfsWinStderr) { $script:LastSshfsWinStderr.TrimEnd("`r", "`n") | Write-Host }
+    }
+  } else {
+    # No drive found. Only treat as "unmounted" if the state drive letter is not present anymore.
+    # Otherwise, refuse to proceed to avoid unmounting/cleaning up the wrong thing.
+    if (-not $drivePresentAtDl) {
+      $res.DriveUnmounted = $true
+    } else {
+      $res.DriveUnmounted = $false
+    }
+  }
+
   if (Test-IsJunction $md) {
-    try { cmd /c "rmdir ""$md""" | Out-Null } catch { }
+    try { cmd /c "rmdir ""$md""" | Out-Null; $res.MountDirRemoved = $true } catch { }
+  } elseif (Test-IsEmptyDir $md) {
+    try { Remove-Item -LiteralPath $md -Force; $res.MountDirRemoved = $true } catch { }
   }
-  try { Remove-Item -LiteralPath $statePath -Force } catch { }
-  return $true
+
+  if ($res.DriveUnmounted) {
+    try { Remove-Item -LiteralPath $statePath -Force; $res.StateRemoved = $true } catch { }
+  }
+
+  return $res
 }
 
 if ($Unmount) {
-  if (-not (Unmount-ByState)) {
+  $un = Unmount-ByState
+  if (-not $un.Found) {
     Write-Host "No state found to unmount for: $name"
   } else {
+    if (-not $un.DriveUnmounted) {
+      Die ("Failed to unmount drive " + $un.DriveLetter + ":")
+    }
     Write-Host "Unmounted: $name"
     Write-Host " -> $mountDir"
   }
   exit 0
 }
-
-if (Test-Path -LiteralPath $mountDir -PathType Container) {
-  if ($Force) {
-    Unmount-ByState | Out-Null
-    Remove-JunctionOrDir $mountDir
-  } else {
-    $st = Read-State
-    if ($st) {
-      Write-Host "Already mounted (state exists): $mountDir"
-      exit 0
-    }
-  }
-} else {
-  New-Item -ItemType Directory -Path $mountDir | Out-Null
-}
-
-if (-not $Force) {
-  if (Test-IsJunction $mountDir) {
-    Die "mount dir exists as a junction but no state file was found: $mountDir`nRe-run with -Force to remount."
-  }
-  if (-not (Test-IsEmptyDir $mountDir)) {
-    Die "mount dir already exists and is not empty: $mountDir`nRe-run with -Force to replace it."
-  }
-}
-
-$cmdArgs = @()
-if ($port) { $cmdArgs += @('-p', $port) }
-$cmdArgs += @($remoteSpec, $mountDir, '-o', $optStr)
 
 if ($DryRun) {
   $fmt = {
@@ -703,83 +773,167 @@ if ($DryRun) {
       if ($locUserForPrint) { $printedSvc += @($locUserForPrint) }
       foreach ($o in @($opts)) { if ($o) { $printedSvc += @('-o', [string]$o) } }
       Write-Host ('sshfs-win command (drive): ' + (& $fmt $printedSvc))
-    } elseif ($script:SshfsCmd) {
-      $sshfsForPrint = $script:SshfsCmd
-      $driveArgsForPrint = @()
-      if ($port) { $driveArgsForPrint += @('-p', $port) }
-      $driveArgsForPrint += @($remoteSpec, $driveMountForPrint, '-o', $optStr)
-      $printedDrive = @($sshfsForPrint) + $driveArgsForPrint
-      Write-Host ('sshfs command (drive): ' + (& $fmt $printedDrive))
     } else {
-      Write-Host "sshfs command (drive): <sshfs-win/sshfs not found>"
+      Write-Host "sshfs-win command (drive): <sshfs-win not found>"
     }
     Write-Host ('junction target: ' + $mountDir + ' -> ' + $letterForPrint + ':\')
   } else {
-    Write-Host "sshfs command (drive): <no free drive letter available>"
-  }
-
-  if ($script:SshfsCmd) {
-    $printedDir = @($script:SshfsCmd) + $cmdArgs
-    Write-Host ('sshfs command (dir fallback): ' + (& $fmt $printedDir))
+    Write-Host "sshfs-win command (drive): <no free drive letter available>"
   }
   exit 0
 }
 
-function Try-MountToDir {
-  try {
-    if (-not $script:SshfsCmd) { return $false }
-    $rc = Invoke-Sshfs -Arguments $cmdArgs -Password $askpassSecret
-    return ($rc -eq 0)
-  } catch {
-    return $false
+$st = Read-State
+$stDrive = ''
+if ($st -and $st.PSObject.Properties.Match('DriveLetter').Count -gt 0) { $stDrive = Normalize-DriveLetter ([string]$st.DriveLetter) }
+$stDriveMounted = $false
+if ($stDrive) {
+  try { $stDriveMounted = (Test-Path -LiteralPath ($stDrive + ':\')) } catch { $stDriveMounted = $false }
+}
+$stDriveProvider = ''
+if ($stDriveMounted) { $stDriveProvider = Get-DriveProviderName $stDrive }
+$stDriveMatchesExpected = $false
+if ($stDriveProvider -and $expectedProvider -and ($stDriveProvider -ieq $expectedProvider)) { $stDriveMatchesExpected = $true }
+
+if ($Force) {
+  if ($st) {
+    $un = Unmount-ByState
+    if ($un.Found -and (-not $un.DriveUnmounted)) {
+      if ($un.ProviderActual -and $un.ProviderExpected -and ($un.ProviderActual -ine $un.ProviderExpected)) {
+        Write-Warning ("State drive " + $un.DriveLetter + ": points to '" + $un.ProviderActual + "', expected '" + $un.ProviderExpected + "'. Skipping unmount.")
+      } else {
+        Die ("Failed to unmount drive " + $un.DriveLetter + ":")
+      }
+    }
+  }
+  if (Test-Path -LiteralPath $mountDir) { Remove-JunctionOrDir $mountDir }
+  try { Remove-Item -LiteralPath $statePath -Force } catch { }
+} else {
+  if ($st) {
+    if ($stDriveMounted) {
+      if ($expectedProvider) {
+        if (-not $stDriveProvider) {
+          Write-Warning ("State drive letter " + $stDrive + ": is mounted but provider cannot be determined. Remounting.")
+          try { Remove-Item -LiteralPath $statePath -Force } catch { }
+          if (Test-IsJunction $mountDir) { Remove-JunctionOrDir $mountDir }
+        } elseif (-not $stDriveMatchesExpected) {
+          Write-Warning ("State drive letter " + $stDrive + ": is mounted but points to '" + $stDriveProvider + "', expected '" + $expectedProvider + "'. Remounting.")
+          try { Remove-Item -LiteralPath $statePath -Force } catch { }
+          if (Test-IsJunction $mountDir) { Remove-JunctionOrDir $mountDir }
+        } else {
+          # If the mount exists (drive is present), don't remount; just ensure the junction exists.
+          if (Test-Path -LiteralPath $mountDir) {
+            if (-not (Test-IsJunction $mountDir)) {
+              if (-not (Test-IsEmptyDir $mountDir)) {
+                Die "mount dir already exists and is not empty: $mountDir`nRe-run with -Force to replace it."
+              }
+              Remove-JunctionOrDir $mountDir
+            }
+          }
+
+          if (-not (Test-Path -LiteralPath $mountDir)) {
+            cmd /c "mklink /J ""$mountDir"" ""$stDrive`:\\""" | Out-Null
+          }
+
+          Write-State ([pscustomobject]@{
+              Name        = $name
+              MountDir    = $mountDir
+              DriveLetter = $stDrive
+              Provider    = $expectedProvider
+              Prefix      = $sshfsWinPrefix
+              Remote      = $remoteSpec
+              CreatedAt   = (Get-Date).ToString('o')
+            })
+
+          Write-Host "Already mounted: $name"
+          Write-Host " -> $mountDir"
+          exit 0
+        }
+      } else {
+        # No expected provider info; trust drive letter and ensure junction exists.
+        if (Test-Path -LiteralPath $mountDir) {
+          if (-not (Test-IsJunction $mountDir)) {
+            if (-not (Test-IsEmptyDir $mountDir)) {
+              Die "mount dir already exists and is not empty: $mountDir`nRe-run with -Force to replace it."
+            }
+            Remove-JunctionOrDir $mountDir
+          }
+        }
+
+        if (-not (Test-Path -LiteralPath $mountDir)) {
+          cmd /c "mklink /J ""$mountDir"" ""$stDrive`:\\""" | Out-Null
+        }
+
+        Write-State ([pscustomobject]@{
+            Name        = $name
+            MountDir    = $mountDir
+            DriveLetter = $stDrive
+            Provider    = $expectedProvider
+            Prefix      = $sshfsWinPrefix
+            Remote      = $remoteSpec
+            CreatedAt   = (Get-Date).ToString('o')
+          })
+
+        Write-Host "Already mounted: $name"
+        Write-Host " -> $mountDir"
+        exit 0
+      }
+    } else {
+      # Stale state: drive is not present. Do not try to unmount by drive letter (it could be reused).
+      Write-Warning "State file exists but drive is not mounted; remounting."
+      try { Remove-Item -LiteralPath $statePath -Force } catch { }
+      if (Test-IsJunction $mountDir) { Remove-JunctionOrDir $mountDir }
+    }
+  }
+
+  if (Test-Path -LiteralPath $mountDir -PathType Container) {
+    if (Test-IsJunction $mountDir) {
+      Die "mount dir exists as a junction but no state file was found: $mountDir`nRe-run with -Force to remount."
+    }
+    if (-not (Test-IsEmptyDir $mountDir)) {
+      Die "mount dir already exists and is not empty: $mountDir`nRe-run with -Force to replace it."
+    }
   }
 }
 
 function Try-MountToDriveAndJunction {
   $letter = ''
-  if ($DriveLetter) {
-    $letter = ([string]$DriveLetter).TrimEnd(':').Trim()
-  } else {
-    $letter = Get-FreeDriveLetter
-  }
-  if ($letter) { $letter = $letter.ToUpperInvariant() }
+  if ($DriveLetter) { $letter = Normalize-DriveLetter $DriveLetter }
+  if (-not $letter) { $letter = Get-FreeDriveLetter }
   if (-not $letter) { Die "no free drive letter available" }
 
-  function Test-DriveMounted([string]$dl) {
-    if (-not $dl) { return $false }
-    $root = ([string]$dl).ToUpperInvariant() + ':\'
-    try { return (Test-Path -LiteralPath $root) } catch { return $false }
+  $driveMount = ($letter + ':')
+  $driveRoot = ($letter + ':\')
+
+  if (Test-Path -LiteralPath $driveRoot) {
+    $prov = Get-DriveProviderName $letter
+    if ($prov -and $expectedProvider -and ($prov -ieq $expectedProvider)) {
+      # The drive is already our sshfs mapping; just ensure the junction exists.
+      Write-Host ("Drive already mounted for this host: " + $driveMount)
+      Remove-JunctionOrDir $mountDir
+      cmd /c "mklink /J ""$mountDir"" ""$letter`:\\""" | Out-Null
+      $script:MountedDriveLetter = [string]$letter
+      return $true
+    }
+    if ($prov) {
+      Die ("drive letter already in use: " + $driveMount + " (" + $prov + ")`nPick another -DriveLetter (or omit it).")
+    }
+    Die "drive letter already in use: $driveMount`nPick another -DriveLetter (or omit it)."
   }
 
-  # Remove empty dir and replace with junction to X:\
-  if (Test-Path -LiteralPath $mountDir) { Remove-JunctionOrDir $mountDir }
-  cmd /c "mkdir ""$mountDir""" | Out-Null
-
-  $driveMount = ($letter + ':')
   $rc = 1
   if ($script:SshfsWinCmd) {
     Write-Host ("Mounting via sshfs-win to drive " + $driveMount + " ...")
 
-    # If the drive letter was previously used, best-effort cleanup.
-    try { cmd /c ("net use " + $driveMount + " /delete /y") | Out-Null } catch { }
-    try { mountvol $driveMount /D | Out-Null } catch { }
-
     # sshfs-win.exe svc syntax: sshfs-win svc PREFIX X: [LOCUSER] [SSHFS_OPTIONS...]
     # If LOCUSER is omitted, the next argument is consumed as LOCUSER, so we must always pass it
     # when we also pass "-o ..." options.
-    $locUser = ''
-    if ($env:USERNAME) {
-      if ($env:USERDOMAIN) {
-        $locUser = ([string]$env:USERDOMAIN + '+' + [string]$env:USERNAME)
-      } else {
-        $locUser = [string]$env:USERNAME
-      }
-    }
+    $locUser = Get-LocalUserForSshfsWin
 
     $tries = @(
       ,@($opts),
       ,@($opts | Where-Object { $_ -ne 'password_stdin' }),
-      ,@($opts | Where-Object { $_ -notmatch '^ServerAliveInterval=' -and $_ -notmatch '^ServerAliveCountMax=' -and $_ -ne 'TCPKeepAlive=yes' }),
+      ,@($opts | Where-Object { $_ -notmatch '^ServerAliveInterval=' -and $_ -notmatch '^ServerAliveCountMax=' }),
       ,@($opts | Where-Object { $_ -ne 'StrictHostKeyChecking=no' }),
       ,@($opts | Where-Object { $_ -ne 'UserKnownHostsFile=/dev/null' }),
       ,@()
@@ -791,7 +945,9 @@ function Try-MountToDriveAndJunction {
       $rc = Invoke-SshfsWinSvc -Prefix $sshfsWinPrefix -DriveMount $driveMount -LocalUser $locUser -Options $optSet -Password $askpassSecret
 
       # Some builds may return a non-zero exit code even though the mount is created.
-      if ($rc -eq 0 -or (Test-DriveMounted $letter)) {
+      $driveAppears = $false
+      try { $driveAppears = (Test-Path -LiteralPath $driveRoot) } catch { $driveAppears = $false }
+      if ($rc -eq 0 -or $driveAppears) {
         if ($rc -ne 0) {
           Write-Warning ("sshfs-win exited with code " + $rc + " but " + $driveMount + " appears mounted; continuing.")
         }
@@ -799,20 +955,17 @@ function Try-MountToDriveAndJunction {
       }
       # Keep trying reduced option sets; sshfs-win builds vary in supported -o options.
     }
-  } elseif ($script:SshfsCmd) {
-    $driveArgs = @()
-    if ($port) { $driveArgs += @('-p', $port) }
-    $driveArgs += @($remoteSpec, $driveMount, '-o', $optStr)
-    $rc = Invoke-Sshfs -Arguments $driveArgs -Password $askpassSecret
   } else {
-    Die "sshfs-win.exe/sshfs.exe not found"
+    Die "sshfs-win.exe not found"
   }
-  if ($rc -ne 0) { return $false }
-
-  $driveRoot = ($letter + ':\')
+  $driveReady = $false
   for ($i = 0; $i -lt 10; $i++) {
-    if (Test-Path -LiteralPath $driveRoot) { break }
+    if (Test-Path -LiteralPath $driveRoot) { $driveReady = $true; break }
     Start-Sleep -Seconds 1
+  }
+  if (-not $driveReady) { return $false }
+  if ($rc -ne 0) {
+    Write-Warning ("sshfs exited with code " + $rc + " but " + $driveMount + " is accessible; continuing.")
   }
 
   # Create junction: .\<host-name> -> X:\
@@ -825,11 +978,6 @@ function Try-MountToDriveAndJunction {
 
 $script:MountedDriveLetter = $null
 $mounted = Try-MountToDriveAndJunction
-if (-not $mounted) {
-  # Fallback for setups that support directory mounts.
-  $mounted = Try-MountToDir
-}
-
 if (-not $mounted) { Die "sshfs mount failed" }
 
 if (-not (Test-Path -LiteralPath $mountDir)) { Die "mount completed but mount dir is missing: $mountDir" }
@@ -838,6 +986,8 @@ Write-State ([pscustomobject]@{
     Name      = $name
     MountDir  = $mountDir
     DriveLetter = $script:MountedDriveLetter
+    Provider  = $expectedProvider
+    Prefix    = $sshfsWinPrefix
     Remote    = $remoteSpec
     CreatedAt = (Get-Date).ToString('o')
   })

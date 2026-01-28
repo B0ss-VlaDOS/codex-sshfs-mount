@@ -675,18 +675,89 @@ is_mounted() {
 
 unmount_dir() {
   local dir="$1"
+  local rc=0
+  local out=""
+  local -a errs=()
+
+  # IMPORTANT: with `set -e`, we must handle failures explicitly.
+  set +e
+
+  if [[ "$os_name" == "Darwin" ]]; then
+    # On macOS, prefer diskutil. It usually works better for FUSE mounts than plain umount.
+    if command -v diskutil >/dev/null 2>&1; then
+      out="$(diskutil unmount "$dir" 2>&1)"
+      rc=$?
+      if [[ $rc -eq 0 ]]; then
+        set -e
+        return 0
+      fi
+      [[ -n "$out" ]] && errs+=("diskutil unmount: $out")
+
+      # If the mount is busy, force usually helps.
+      out="$(diskutil unmount force "$dir" 2>&1)"
+      rc=$?
+      if [[ $rc -eq 0 ]]; then
+        set -e
+        return 0
+      fi
+      [[ -n "$out" ]] && errs+=("diskutil unmount force: $out")
+    fi
+
+    out="$(umount "$dir" 2>&1)"
+    rc=$?
+    if [[ $rc -eq 0 ]]; then
+      set -e
+      return 0
+    fi
+    [[ -n "$out" ]] && errs+=("umount: $out")
+
+    out="$(umount -f "$dir" 2>&1)"
+    rc=$?
+    if [[ $rc -eq 0 ]]; then
+      set -e
+      return 0
+    fi
+    [[ -n "$out" ]] && errs+=("umount -f: $out")
+
+    set -e
+    if [[ ${#errs[@]} -gt 0 ]]; then
+      echo "unmount errors:" >&2
+      printf '  - %s\n' "${errs[@]}" >&2
+    fi
+    return 1
+  fi
+
+  # Linux
   if command -v fusermount3 >/dev/null 2>&1; then
-    fusermount3 -u "$dir" >/dev/null 2>&1 || true
-    return 0
+    out="$(fusermount3 -u "$dir" 2>&1)"
+    rc=$?
+    if [[ $rc -eq 0 ]]; then
+      set -e
+      return 0
+    fi
+    [[ -n "$out" ]] && errs+=("fusermount3 -u: $out")
   fi
   if command -v fusermount >/dev/null 2>&1; then
-    fusermount -u "$dir" >/dev/null 2>&1 || true
-    return 0
+    out="$(fusermount -u "$dir" 2>&1)"
+    rc=$?
+    if [[ $rc -eq 0 ]]; then
+      set -e
+      return 0
+    fi
+    [[ -n "$out" ]] && errs+=("fusermount -u: $out")
   fi
-  umount "$dir" >/dev/null 2>&1 || true
-  if [[ "$os_name" == "Darwin" ]] && command -v diskutil >/dev/null 2>&1; then
-    diskutil unmount "$dir" >/dev/null 2>&1 || true
+
+  out="$(umount "$dir" 2>&1)"
+  rc=$?
+  set -e
+  if [[ $rc -ne 0 && -n "$out" ]]; then
+    errs+=("umount: $out")
   fi
+  if [[ $rc -ne 0 && ${#errs[@]} -gt 0 ]]; then
+    echo "unmount errors:" >&2
+    printf '  - %s\n' "${errs[@]}" >&2
+  fi
+  return $rc
 }
 
 wait_for_unmount() {
@@ -726,12 +797,30 @@ if [[ $UNMOUNT -eq 1 ]]; then
     echo "Would unmount: $mount_dir"
     exit 0
   fi
-  unmount_dir "$mount_dir"
+  unmount_dir "$mount_dir" || true
   if wait_for_unmount "$mount_dir"; then
     echo "Unmounted: $NAME"
     echo " -> $mount_dir"
     exit 0
   fi
+
+  if [[ "$os_name" == "Darwin" ]]; then
+    cat >&2 <<'EOF'
+hint: unmount can fail if something is using the mount (open file, current working directory, VS Code indexer).
+Try:
+  - close terminals/VS Code windows that use this mount, then run unmount again
+  - or force unmount:
+      diskutil unmount force "<mountpoint>"
+EOF
+  else
+    cat >&2 <<'EOF'
+hint: unmount can fail if something is using the mount (open file, current working directory).
+Try closing processes using the mount, then run unmount again.
+EOF
+  fi
+
+  echo "mount grep:" >&2
+  mount | grep -F " on $mount_dir" >&2 || true
   die "failed to unmount: $mount_dir"
 fi
 

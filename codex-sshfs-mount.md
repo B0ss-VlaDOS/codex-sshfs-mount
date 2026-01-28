@@ -120,3 +120,10 @@ SSHFS_EXTRA_OPTS="volname=myremote,follow_symlinks" ./codex-sshfs-mount.sh --sel
 ## Troubleshooting
 
 - `fuse: failed to exec mount program: Operation not permitted` (macOS): чаще всего не разрешён/не загружен macFUSE system extension, либо запуск идёт из ограниченной sandbox-среды.
+- `failed to unmount` (macOS/Linux): обычно означает, что размонтирование не удалось (ошибка была выведена выше). Частые причины:
+  - mountpoint используется (открытые файлы, терминал/VS Code с текущей директорией внутри mountpoint);
+  - недостаточно прав на unmount в текущей среде.
+  На macOS чаще всего помогает:
+  ```sh
+  diskutil unmount force "<mountpoint>"
+  ```
