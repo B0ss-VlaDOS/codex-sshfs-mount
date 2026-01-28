@@ -40,6 +40,76 @@ Windows:
 powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1
 ```
 
+## Windows: полный цикл (с нуля)
+
+### 1) Установите расширение SSH FS в VS Code
+
+1. Установите VS Code.
+2. Откройте Extensions (`Ctrl+Shift+X`) и установите расширение **SSH FS** (Kelvin Schoofs).
+3. Альтернатива: `Ctrl+P` → вставьте команду `ext install Kelvin.vscode-sshfs` → Enter.
+
+### 2) Добавьте новый SSH FS host (sshfs.configs)
+
+Добавляйте хост **через GUI/команды расширения SSH FS** (расширение само сохранит конфиг в `sshfs.configs`).
+
+1. Откройте Command Palette: `Ctrl+Shift+P`.
+2. Запустите команду SSH FS для добавления нового хоста (например `SSH FS: Add Host` / `SSH FS: Add New Host`) и заполните поля:
+   - `name`/`label` — короткое имя (по нему вы выбираете хост **и в плагине, и в нашем скрипте**: `-Select "my-host"`),
+   - `host` — домен/IP,
+   - `port` — обычно `22`,
+   - `username` — пользователь на сервере,
+   - `root` — **путь до корня сайта на сервере** (например `/var/www/site`, `/home/user/www`, и т.п.).
+3. Если используете парольную аутентификацию — пароль хранится в самом расширении (через механизмы VS Code), а не в `settings.json`.
+
+Примечания:
+- Рекомендуется ключевая аутентификация: укажите `privateKeyPath` (в UI расширения или в `sshfs.configs`) и держите ключ в `~/.ssh/`.
+
+### 3) Установите WinFsp + SSHFS-Win
+
+Рекомендуемый вариант (winget):
+```powershell
+winget install WinFsp.WinFsp
+winget install SSHFS-Win.SSHFS-Win
+```
+
+Проверка:
+```powershell
+Get-Command sshfs-win
+```
+
+После установки закройте/откройте терминал и VS Code (иногда помогает полное выключение/включение Windows).
+
+### 4) Смонтируйте хост нашим скриптом
+
+Из папки репозитория:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -Select "my-host"
+```
+
+Опционально — выбрать букву диска:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -Select "my-host" -DriveLetter X
+```
+
+Что получится:
+- будет создан отдельный диск (`X:` или другая свободная буква),
+- рядом со скриптом появится junction `.\my-host\ -> X:\` (для удобства).
+
+### 5) Откройте проект в VS Code
+
+В VS Code откройте папку проекта как:
+- диск (`X:\`) **или**
+- junction-папку рядом со скриптом (`.\my-host\`).
+
+### 6) Размонтирование
+
+Через наш скрипт:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -Select "my-host" -Unmount
+```
+
+Или через Проводник: отключите/извлеките соответствующий диск.
+
 ## Баги, исправленные до v1.2
 
 ### Общие / `settings.json`
@@ -57,4 +127,3 @@ powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1
 - Исправлены проблемы идемпотентности: корректная работа с state-файлом и восстановление junction при “уже смонтировано”.
 - Сделан безопасный `-Unmount`: защита от ситуации, когда буква диска из state переиспользована (проверка по `ProviderName` вида `\\sshfs\...`, поиск актуальной буквы по provider).
 - Улучшены подсказки/поиск `sshfs-win.exe` и поведение `-DryRun`.
-
