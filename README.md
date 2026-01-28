@@ -54,7 +54,7 @@ powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1
 
 1. Откройте Command Palette: `Ctrl+Shift+P`.
 2. Запустите команду SSH FS для добавления нового хоста (например `SSH FS: Add Host` / `SSH FS: Add New Host`) и заполните поля:
-   - `name`/`label` — короткое имя (по нему вы выбираете хост **и в плагине, и в нашем скрипте**: `-Select "my-host"`),
+   - `name`/`label` — короткое имя (по нему вы выбираете хост **и в плагине, и в нашем скрипте**: `-Select "{имя хоста}"`),
    - `host` — домен/IP,
    - `port` — обычно `22`,
    - `username` — пользователь на сервере,
@@ -83,29 +83,29 @@ Get-Command sshfs-win
 
 Из папки репозитория:
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -Select "my-host"
+powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -Select "{имя хоста}"
 ```
 
 Опционально — выбрать букву диска:
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -Select "my-host" -DriveLetter X
+powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -Select "{имя хоста}" -DriveLetter X
 ```
 
 Что получится:
 - будет создан отдельный диск (`X:` или другая свободная буква),
-- рядом со скриптом появится junction `.\my-host\ -> X:\` (для удобства).
+- рядом со скриптом появится junction `.\{имя хоста}\ -> X:\` (для удобства).
 
 ### 5) Откройте проект в VS Code
 
 В VS Code откройте папку проекта как:
 - диск (`X:\`) **или**
-- junction-папку рядом со скриптом (`.\my-host\`).
+- junction-папку рядом со скриптом (`.\{имя хоста}\`).
 
 ### 6) Размонтирование
 
 Через наш скрипт:
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -Select "my-host" -Unmount
+powershell -ExecutionPolicy Bypass -File .\codex-sshfs-mount.ps1 -Select "{имя хоста}" -Unmount
 ```
 
 Или через Проводник: отключите/извлеките соответствующий диск.
