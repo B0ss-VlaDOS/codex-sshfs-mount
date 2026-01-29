@@ -13,6 +13,14 @@ die() {
   exit 1
 }
 
+log() {
+  echo "info: $*" >&2
+}
+
+log_err() {
+  echo "error: $*" >&2
+}
+
 usage() {
   cat <<'EOF'
 Usage: codex-sshfs-mount.sh [options]
@@ -71,6 +79,7 @@ script_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 os_name="$(uname -s 2>/dev/null || echo "")"
 
 ensure_sshfs() {
+  log "checking sshfs dependencies (os=$os_name)"
   local fuse_missing=0
   local macfuse_install_cmd=""
 
@@ -116,6 +125,7 @@ ensure_sshfs() {
       fi
       die "macFUSE is required on macOS (install it and re-run)"
     fi
+    log "sshfs found: $(command -v sshfs)"
     return 0
   fi
 
@@ -560,6 +570,7 @@ if [[ -z "$SETTINGS_PATH" ]]; then
 fi
 [[ -n "$SETTINGS_PATH" ]] || die "could not find VS Code settings.json (set VSCODE_SETTINGS or use --settings PATH)"
 [[ -f "$SETTINGS_PATH" ]] || die "settings.json not found: $SETTINGS_PATH"
+log "using settings.json: $SETTINGS_PATH"
 
 settings_dir="$(cd -- "$(dirname -- "$SETTINGS_PATH")" && pwd)"
 
@@ -647,6 +658,7 @@ PASSWORD_VALUE="${cfg_pw_value[$idx]}"
 KEY_PATH="${cfg_key_path[$idx]}"
 
 [[ -n "${HOST:-}" ]] || die "selected config has empty host"
+log "selected: name='$NAME' host='$HOST' user='${USERNAME:-}' port='${PORT:-}' root='${ROOT:-}'"
 
 safe_name="${NAME// /_}"
 safe_name="${safe_name//\//_}"
@@ -656,6 +668,7 @@ safe_name="$(printf '%s' "$safe_name" | tr -cd 'A-Za-z0-9._-')"
 
 mount_dir="$script_dir/$safe_name"
 mkdir -p "$mount_dir"
+log "mount dir: $mount_dir"
 
 is_mounted() {
   local dir="$1"
@@ -797,6 +810,7 @@ if [[ $UNMOUNT -eq 1 ]]; then
     echo "Would unmount: $mount_dir"
     exit 0
   fi
+  log "unmount requested: $mount_dir"
   unmount_dir "$mount_dir" || true
   if wait_for_unmount "$mount_dir"; then
     echo "Unmounted: $NAME"
@@ -828,12 +842,17 @@ remote="$HOST"
 [[ -n "${USERNAME:-}" ]] && remote="${USERNAME}@${HOST}"
 remote_spec="${remote}:"
 [[ -n "${ROOT:-}" ]] && remote_spec="${remote}:${ROOT}"
+log "remote spec: $remote_spec"
 
 optlist=(
   "reconnect"
   "ServerAliveInterval=${KEEPALIVE_INTERVAL}"
   "ServerAliveCountMax=${KEEPALIVE_COUNT}"
   "TCPKeepAlive=yes"
+  "ConnectTimeout=10"
+  "ConnectionAttempts=1"
+  "StrictHostKeyChecking=no"
+  "UserKnownHostsFile=/dev/null"
 )
 
 if [[ -n "${KEY_PATH:-}" ]]; then
@@ -850,6 +869,7 @@ if [[ -n "${PORT:-}" ]]; then
   cmd+=(-p "$PORT")
 fi
 cmd+=("$remote_spec" "$mount_dir" -o "$optstr")
+log "sshfs command prepared"
 
 if [[ $DRY_RUN -eq 1 ]]; then
   printf 'sshfs command:'
@@ -861,6 +881,10 @@ fi
 run_sshfs() {
   SSHFS_ERR_FILE="$(mktemp "${TMPDIR:-/tmp}/codex-sshfs-stderr.XXXXXX")"
   local rc=0
+
+  if [[ -z "${KEY_PATH:-}" && "${PASSWORD_MODE:-empty}" != "string" ]]; then
+    log "no key/password in config; sshfs may wait for interactive auth"
+  fi
 
   if [[ "${PASSWORD_MODE:-empty}" == "string" && -n "${PASSWORD_VALUE:-}" ]]; then
     local askpass=""
@@ -883,6 +907,7 @@ EOF
     set -e
   fi
 
+  log "sshfs exit code: $rc"
   return $rc
 }
 

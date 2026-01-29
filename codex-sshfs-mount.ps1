@@ -21,6 +21,10 @@ function Die([string]$Message) {
   exit 1
 }
 
+function Info([string]$Message) {
+  Write-Host ("info: " + $Message)
+}
+
 function Get-PropValue($Obj, [string]$Name) {
   if ($null -eq $Obj) { return $null }
   $p = $Obj.PSObject.Properties[$Name]
