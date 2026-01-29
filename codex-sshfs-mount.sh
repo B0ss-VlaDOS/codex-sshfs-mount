@@ -666,7 +666,70 @@ safe_name="${safe_name//\\/_}"
 safe_name="$(printf '%s' "$safe_name" | tr -cd 'A-Za-z0-9._-')"
 [[ -n "$safe_name" ]] || safe_name="sshfs-mount"
 
+# Check if directory is a stale (dead) mount point that needs forced unmount
+# This happens when VPN disconnects or network changes while sshfs is mounted
+is_stale_mount() {
+  local dir="$1"
+  
+  # If directory doesn't exist, it's not a stale mount
+  [[ -e "$dir" ]] || [[ -d "$dir" ]] 2>/dev/null || return 1
+  
+  # Try to stat the directory with a short timeout
+  # If it fails with I/O error, it's likely a stale mount
+  local stat_result
+  stat_result=$(stat "$dir" 2>&1) && return 1
+  
+  # Check if the error is I/O related
+  if echo "$stat_result" | grep -qiE "input/output error|transport endpoint|stale|timed out"; then
+    return 0
+  fi
+  
+  # Also check if ls fails with I/O error
+  local ls_result
+  ls_result=$(ls "$dir" 2>&1) && return 1
+  
+  if echo "$ls_result" | grep -qiE "input/output error|transport endpoint|stale|timed out"; then
+    return 0
+  fi
+  
+  return 1
+}
+
+# Force unmount a stale/dead mount point
+force_unmount_stale() {
+  local dir="$1"
+  log "detected stale mount, attempting forced unmount: $dir"
+  
+  set +e
+  if [[ "$os_name" == "Darwin" ]]; then
+    # On macOS, diskutil force unmount is the most reliable
+    diskutil unmount force "$dir" 2>/dev/null && { set -e; log "stale mount cleared with diskutil"; return 0; }
+    umount -f "$dir" 2>/dev/null && { set -e; log "stale mount cleared with umount -f"; return 0; }
+  else
+    # On Linux, try fusermount first, then umount
+    fusermount3 -uz "$dir" 2>/dev/null && { set -e; log "stale mount cleared with fusermount3 -uz"; return 0; }
+    fusermount -uz "$dir" 2>/dev/null && { set -e; log "stale mount cleared with fusermount -uz"; return 0; }
+    umount -l "$dir" 2>/dev/null && { set -e; log "stale mount cleared with umount -l"; return 0; }
+  fi
+  set -e
+  
+  log_err "failed to clear stale mount: $dir"
+  return 1
+}
+
 mount_dir="$script_dir/$safe_name"
+
+# Check for stale mount BEFORE mkdir to prevent I/O errors
+# This commonly happens when VPN disconnects or network changes
+if is_stale_mount "$mount_dir"; then
+  log "stale mount detected at $mount_dir (likely from network/VPN change)"
+  if ! force_unmount_stale "$mount_dir"; then
+    die "Cannot clear stale mount at $mount_dir. Try manually: diskutil unmount force \"$mount_dir\""
+  fi
+  # Give filesystem a moment to settle
+  sleep 1
+fi
+
 mkdir -p "$mount_dir"
 log "mount dir: $mount_dir"
 
