@@ -179,6 +179,17 @@ command -v sshfs
 ./codex-sshfs-mount.sh --select "{имя хоста}" --unmount
 ```
 
+### 7) Принудительное размонтирование зависших точек (I/O error)
+
+Если VPN отключился или сеть изменилась во время активного монтирования, точка может «зависнуть» (ошибка `Input/output error`). Для таких случаев:
+```sh
+./codex-sshfs-mount.sh --force-unmount-stale {имя хоста}
+# или абсолютный путь:
+./codex-sshfs-mount.sh --force-unmount-stale /full/path/to/mount
+```
+
+Команда использует `diskutil unmount force` (macOS) или `fusermount -uz` / `umount -l` (Linux) для принудительного отключения недоступной точки.
+
 ## Баги, исправленные до v1.2
 
 ### Общие / `settings.json`
