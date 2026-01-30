@@ -33,6 +33,7 @@ Options:
   --select NAME|NUMBER   Non-interactive selection (match by name, or 1-based index).
   --unmount, --umount    Unmount selected host (no mount).
   --force                If mountpoint is already mounted, unmount first.
+  --force-unmount-stale PATH  Force unmount a stale/dead sshfs mount (I/O errors).
   --interval SECONDS     SSH keepalive interval (default: 15).
   --count N              SSH keepalive max missed (default: 3).
   --dry-run              Print sshfs command and exit (never prints passwords).
@@ -51,6 +52,7 @@ SELECT=""
 FORCE=0
 DRY_RUN=0
 UNMOUNT=0
+FORCE_UNMOUNT_STALE_PATH=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -62,6 +64,8 @@ while [[ $# -gt 0 ]]; do
       UNMOUNT=1; shift ;;
     --force)
       FORCE=1; shift ;;
+    --force-unmount-stale)
+      FORCE_UNMOUNT_STALE_PATH="${2:-}"; shift 2 ;;
     --interval)
       KEEPALIVE_INTERVAL="${2:-}"; shift 2 ;;
     --count)
@@ -77,6 +81,79 @@ done
 
 script_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 os_name="$(uname -s 2>/dev/null || echo "")"
+
+# Handle --force-unmount-stale immediately (before any other logic)
+if [[ -n "$FORCE_UNMOUNT_STALE_PATH" ]]; then
+  force_unmount_stale_now() {
+    local dir="$1"
+    
+    # Resolve relative paths
+    if [[ "$dir" != /* ]]; then
+      dir="$script_dir/$dir"
+    fi
+    
+    log "force unmounting stale sshfs mount: $dir"
+    
+    local success=0
+    set +e
+    
+    if [[ "$os_name" == "Darwin" ]]; then
+      # On macOS, diskutil force is the most reliable for stale FUSE mounts
+      log "trying: diskutil unmount force \"$dir\""
+      if diskutil unmount force "$dir" 2>&1; then
+        success=1
+        log "SUCCESS: unmounted with diskutil unmount force"
+      else
+        log "diskutil failed, trying umount -f..."
+        if umount -f "$dir" 2>&1; then
+          success=1
+          log "SUCCESS: unmounted with umount -f"
+        fi
+      fi
+    else
+      # On Linux, try fusermount with lazy unmount first
+      log "trying: fusermount3 -uz \"$dir\""
+      if fusermount3 -uz "$dir" 2>&1; then
+        success=1
+        log "SUCCESS: unmounted with fusermount3 -uz"
+      else
+        log "trying: fusermount -uz \"$dir\""
+        if fusermount -uz "$dir" 2>&1; then
+          success=1
+          log "SUCCESS: unmounted with fusermount -uz"
+        else
+          log "trying: umount -l \"$dir\""
+          if umount -l "$dir" 2>&1; then
+            success=1
+            log "SUCCESS: unmounted with umount -l"
+          fi
+        fi
+      fi
+    fi
+    
+    set -e
+    
+    if [[ $success -eq 1 ]]; then
+      # Give filesystem time to settle
+      sleep 1
+      log "stale mount cleared successfully"
+      return 0
+    else
+      log_err "FAILED to unmount stale mount: $dir"
+      if [[ "$os_name" == "Darwin" ]]; then
+        log_err "You may need to restart Finder or reboot."
+        log_err "Try: killall Finder"
+      fi
+      return 1
+    fi
+  }
+  
+  if force_unmount_stale_now "$FORCE_UNMOUNT_STALE_PATH"; then
+    exit 0
+  else
+    exit 1
+  fi
+fi
 
 ensure_sshfs() {
   log "checking sshfs dependencies (os=$os_name)"

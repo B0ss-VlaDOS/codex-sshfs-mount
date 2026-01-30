@@ -91,7 +91,31 @@ sh codex-sshfs-mount.sh
 ```sh
 ./codex-sshfs-mount.sh --select "имя хоста" --unmount --dry-run
 ```
+## Принудительное размонтирование зависших точек (I/O error)
 
+Когда VPN отключается или сеть меняется во время активного sshfs-монтирования, точка монтирования может «зависнуть» — любое обращение к ней вызывает ошибку `Input/output error`. Стандартный `--unmount` в этом случае не поможет.
+
+Для таких ситуаций есть отдельная команда:
+```sh
+./codex-sshfs-mount.sh --force-unmount-stale <путь>
+```
+
+Примеры:
+```sh
+# По имени папки (относительный путь от скрипта)
+./codex-sshfs-mount.sh --force-unmount-stale ipran
+
+# Абсолютный путь
+./codex-sshfs-mount.sh --force-unmount-stale /Users/b0oss/mount/ipran
+```
+
+Что делает команда:
+- **macOS**: `diskutil unmount force` (предпочтительно), затем `umount -f`
+- **Linux**: `fusermount3 -uz` → `fusermount -uz` → `umount -l` (lazy unmount)
+
+Флаги `-uz` и `-l` выполняют «ленивое» размонтирование — точка отключается немедленно, даже если файловая система недоступна или занята.
+
+> **Примечание**: скрипт автоматически пытается обнаружить и исправить зависшие точки при обычном монтировании (`--force`), но если это не помогло — используйте `--force-unmount-stale` напрямую.
 ## Где берётся `settings.json`
 
 - Можно явно: `--settings PATH` или переменная `VSCODE_SETTINGS`.
